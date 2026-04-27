@@ -4,29 +4,46 @@
 
 vpstack auto-activates on voice-anonymization projects and stays silent everywhere else. It encodes domain knowledge for the [VoicePrivacy 2026 challenge](https://www.voiceprivacychallenge.org/) — real B1/B2 baselines, real EER/WER/linkability eval, real reproducibility checks — so AI agents stop hallucinating SpeechBrain conventions and inventing baseline numbers.
 
-**Status: 0.1.0-dev — pre-release. APIs may change.**
+**Status: 0.1.0-dev — pre-release.** The packages are not yet on npm/PyPI. Install from source for now (instructions below). APIs may change before v0.1.0.
 
 ---
 
 ## Install
 
-```bash
-npx vpstack@latest
-```
-
-The installer detects which AI coding agent you have (Claude Code, Codex, Cursor, Cline) and installs accordingly. Run again any time to upgrade.
-
-For the MCP server only (Claude Desktop, Cursor, etc.):
+### From source (current — 0.1.0-dev)
 
 ```bash
-pip install vpstack-mcp
+git clone https://github.com/khamidov17/vpstack.git ~/.claude/skills/vpstack
+chmod +x ~/.claude/skills/vpstack/bin/*
 ```
 
-For the SpeechBrain recipe only:
+That puts the 6 skills + 7 bin scripts where Claude Code expects them. Restart Claude Code and try `/vp-baseline-compare` in a voice-anonymization project.
+
+For the MCP server (Claude Desktop / Cursor / Codex):
 
 ```bash
-pip install speechbrain-voice-anon
+cd ~/.claude/skills/vpstack/mcp-server && pip install -e .
 ```
+
+Then point your MCP client at the `vpstack-mcp` console script.
+
+For the SpeechBrain recipe:
+
+```bash
+cd ~/.claude/skills/vpstack/speechbrain_voice_anon && pip install -e .
+```
+
+### After v0.1.0 publish
+
+Once the packages are on the registries (target: when B2 baseline reproducibility lands), install via:
+
+```bash
+npx vpstack@latest                    # skills + bin
+pip install vpstack-mcp               # MCP server only
+pip install speechbrain-voice-anon    # recipe only
+```
+
+The installer auto-detects which AI coding agent you have (Claude Code, Codex, Cursor, Cline) and installs accordingly.
 
 ---
 
