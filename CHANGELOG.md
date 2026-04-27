@@ -4,6 +4,18 @@ All notable changes to vpstack are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Fixed (correctness audit, 2026-04-28)
+- **B1 frame length: 25 → 20 ms** to match the canonical Patino VP2020 reference (`anonymise_dir_mcadams.py`). Earlier value was wrong; B1 numbers from the prior version would not match published baselines.
+- **B1 pole mask: exclude ±π real-axis poles.** Previously a pole at `angle = π` (negative real) would get transformed to `π^0.8 ≈ 2.499`, lifting it off the real axis with no conjugate partner — geometrically wrong. Canonical Patino uses `np.iscomplex(roots)`. Audit-flagged and corrected.
+- **B1 Levinson-Durbin dead branch removed.** The `if i > 0 else [r[1]]` clause in `_lpc()` was confirmed dead by concrete trace; general expression handles `i==0` correctly.
+- **`check_submission.py` REWRITTEN.** Prior version validated an invented format (JSON files, `linkability.json`, `{male, female, overall}` gender split). Actual VP2026 layout per Eval Plan v1 (HAL hal-05561895, Tables 8-9) is: CSV files under `exp/asr/`, `exp/ser/`, `exp/asv_ssl/`, `exp/asv_anon<suffix>/`, with submission archive at `exp/results_summary/track1/result_for_submission<suffix>.zip`. Track 2 (multilingual) layout also handled. Privacy is **EER-only** in VP2026 — no `linkability.json`. Gender split is **F-F, M-M, Mixed** (not male/female/overall). Earlier validator would have blessed invalid submissions and rejected valid ones.
+- **HuBERT layer claim corrected.** Prior `get_component_info.py` cited a "Liu et al. 2024" paper that doesn't exist and stated "layer 6 = content / layer 12 = speaker" — partially wrong. Replaced with Pasad, Chou, Livescu (ASRU 2021, arXiv:2107.04734): HuBERT-base content peaks at layers 7-9, speaker info concentrates in early layers 1-4, layer 12 is content-leaning (close to masked-prediction target).
+
+### Added (docs + agent context)
+- **`CLAUDE.md` at repo root** — context for AI agents working IN this repo. Architecture overview, non-negotiable rules (no GPLv3 vendoring, no weights bundling, telemetry allowlist), where things live, common tasks (add a new MCP tool, add a new skill, implement a recipe), domain primer.
+- **`docs/claude-md-template.md`** — context to drop into a researcher's voice-anonymization project's CLAUDE.md. VP2026 metric directions (privacy = HIGHER EER, utility = LOWER WER), canonical baselines, attacker conditions, dataset conventions, model licenses, "use vpstack skill X instead of writing one-off script Y" routing rules. Researcher copies via `cat ~/.claude/skills/vpstack/docs/claude-md-template.md >> CLAUDE.md`.
+- **README expansion: per-skill examples + per-tool reference + session walkthrough.** Each of the 7 skills shows a researcher dialogue → vpstack response pattern. Each of the 8 MCP tools has a one-row table entry with cost + return shape.
+
 ### Added (post-initial-commit pass)
 - **`/vp-attack` skill + `vp_run_attacker` MCP tool** — VPC-conformant ASV attacker against anonymized output. Supports the three official conditions (ignorant / lazy_informed / semi_informed). Per-gender EER + linkability (ZEBRA Cllr). Recipe is stubbed; spec is locked. The wedge feature that makes vpstack research infrastructure, not just a SpeechBrain wrapper.
 - **`.vpstack/ask-later` marker** with 60-min validity — fixes the multi-skill-session re-prompt loop (F32 from QA).

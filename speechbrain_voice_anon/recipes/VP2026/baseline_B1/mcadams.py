@@ -22,7 +22,7 @@ def mcadams_anonymize(
     sample_rate: int,
     alpha: float = 0.8,
     lpc_order: int = 20,
-    frame_length_ms: int = 25,
+    frame_length_ms: int = 20,   # canonical VP2020 B1 default (Patino) — was 25, fixed 2026-04-28
     hop_length_ms: int = 10,
     eps: float = 1e-8,
 ) -> np.ndarray:
@@ -92,11 +92,17 @@ def mcadams_anonymize(
         # Keep only stable poles (inside unit circle)
         roots = roots[np.abs(roots) < 1.0 - eps]
 
-        # McAdams transformation: angle' = angle ** alpha, magnitude unchanged
+        # McAdams transformation: angle' = sign(angle) * |angle|**alpha, magnitude unchanged.
+        # Verified equivalent to canonical Patino theta**alpha for upper-half conjugate poles.
         magnitudes = np.abs(roots)
         angles = np.angle(roots)
-        # Apply only to non-real-axis poles (avoid sign flips on real poles)
-        complex_mask = np.abs(angles) > eps
+        # Apply ONLY to complex (non-real-axis) poles. Real-axis poles sit at angle=0 (positive
+        # real) or angle=±π (negative real). The canonical Patino code (anonymise_dir_mcadams.py,
+        # VP2020 EURECOM) uses np.iscomplex(roots) to filter; equivalent here is "angle is not
+        # 0 AND angle is not ±π". Without the ±π exclusion, a pole at angle=π gets transformed
+        # to π**0.8 ≈ 2.499, which lifts it off the real axis with no conjugate partner —
+        # geometrically wrong (verified by audit 2026-04-28).
+        complex_mask = (np.abs(angles) > eps) & (np.abs(np.abs(angles) - np.pi) > eps)
         new_angles = angles.copy()
         new_angles[complex_mask] = np.sign(angles[complex_mask]) * (np.abs(angles[complex_mask]) ** alpha)
         new_roots = magnitudes * np.exp(1j * new_angles)
@@ -145,7 +151,10 @@ def _lpc(frame: np.ndarray, order: int) -> np.ndarray:
     a[0] = 1.0
     e = r[0]
     for i in range(order):
-        k = -np.sum(a[: i + 1] * r[i + 1 : 0 : -1] if i > 0 else [r[1]]) / e
+        # Audit 2026-04-28: removed dead `if i > 0 else [r[1]]` branch.
+        # Verified by trace: a[:1]*r[1:0:-1] = [1.0]*[r[1]] = [r[1]] for i==0, identical
+        # to the special case. The general expression handles every iteration correctly.
+        k = -np.sum(a[: i + 1] * r[i + 1 : 0 : -1]) / e
         a_new = a.copy()
         a_new[1 : i + 2] = a[1 : i + 2] + k * a[i :: -1][: i + 1]
         a = a_new

@@ -6,9 +6,9 @@ baseline: B1
 seed: 42
 
 # McAdams transformation
-alpha: 0.8                # McAdams coefficient. 0.8 = standard. Lower = stronger anonymization.
+alpha: 0.8                # McAdams coefficient. 0.8 = standard VP2020 B1 default.
 lpc_order: 20             # LPC analysis order for 16 kHz speech.
-frame_length_ms: 25
+frame_length_ms: 20       # Canonical Patino default (VP2020/VP2024 B1). Earlier docs said 25; that was wrong.
 hop_length_ms: 10
 
 # Determinism

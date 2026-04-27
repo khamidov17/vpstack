@@ -16,16 +16,25 @@ from vpstack_mcp.errors import ToolResult, ok, err
 # speechbrain_voice_anon/component_info.yaml.
 _BUILTIN_COMPONENTS: dict[str, dict] = {
     "hubert": {
-        "description": "HuBERT — self-supervised speech representation. Layer choice matters: "
-                       "layer 6 emphasizes content (better for anonymization disentanglement), "
-                       "layer 12 emphasizes speaker identity.",
+        "description": "HuBERT — self-supervised speech representation (12-layer base model). "
+                       "Per Pasad, Chou, Livescu (ASRU 2021), HuBERT-base shows phonetic content "
+                       "peaking around layers 7-9, with word-level info further up at layers 9-11. "
+                       "Speaker information concentrates in EARLY layers (1-4); layer 12 is closer "
+                       "to the masked-prediction target and is content-leaning, not speaker-leaning. "
+                       "Earlier vpstack docs claimed 'layer 6 = content / layer 12 = speaker' — "
+                       "that claim was partially wrong (corrected 2026-04-28 audit). For voice "
+                       "anonymization, ContentVec (Qian et al., ICML 2022) is the disentanglement-tuned "
+                       "variant typically used.",
         "tradeoffs": {
-            "layer_6": "Content-leaning; better speaker anonymization, slightly higher WER risk",
-            "layer_12": "Speaker-leaning; not recommended for content encoder in anonymization",
+            "layer_6": "Pre-content peak; some phonetic + some residual speaker. Common in VP recipes.",
+            "layer_7_to_9": "Phonetic content peak per Pasad et al. ASRU 2021. Default for most uses.",
+            "layer_1_to_4": "Speaker-leaning. Avoid for content encoder in anonymization.",
+            "layer_12": "Content-leaning (close to masked target). Not speaker-leaning despite earlier claims.",
         },
         "papers": [
-            "Hsu et al., HuBERT: arXiv:2106.07447",
-            "Liu et al. 2024 (layer-choice analysis for VP2024)",
+            "Hsu et al., HuBERT, arXiv:2106.07447",
+            "Pasad, Chou, Livescu, Layer-Wise Analysis of a Self-Supervised Speech Representation Model, ASRU 2021, arXiv:2107.04734",
+            "Qian et al., ContentVec (disentanglement-tuned variant), ICML 2022",
         ],
         "license": "Apache 2.0 (facebook/hubert-base-ls960)",
     },

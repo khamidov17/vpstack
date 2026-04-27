@@ -119,7 +119,7 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--alpha", type=float, default=0.8, help="McAdams coefficient.")
     parser.add_argument("--lpc_order", type=int, default=20)
-    parser.add_argument("--frame_length_ms", type=int, default=25)
+    parser.add_argument("--frame_length_ms", type=int, default=20)  # Patino canonical (was 25)
     parser.add_argument("--hop_length_ms", type=int, default=10)
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--output_format", choices=["json", "human"], default="human")
