@@ -73,7 +73,7 @@ If unknown component, proceed without — note in the doc that vpstack didn't re
 ### Step 3: Write hypothesis doc
 
 ```bash
-SLUG=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 mkdir -p ~/.vpstack/projects/$SLUG/hypotheses
 EXP_ID="$(date +%Y%m%d-%H%M%S)-$(echo "$HYPOTHESIS_TEXT" | head -c 40 | tr -c 'a-zA-Z0-9' '-' | sed 's/--*/-/g')"
 ```

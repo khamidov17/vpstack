@@ -66,9 +66,10 @@ _TOOLS: dict[str, dict[str, Any]] = {
     "vp_run_eval": {
         "handler": run_eval.handle,
         "description": (
-            "Run the full VP2026 evaluation pipeline on the user's anonymization system. "
-            "Computes EER (overall + per-gender), WER, linkability, and side-channel metrics. "
-            "Held-out 'test' split blocked unless explicit opt-in to prevent overfitting."
+            "(NOT YET IMPLEMENTED — v0.2) Run the full VP2026 evaluation pipeline on the user's "
+            "anonymization system. Will compute EER (overall + per-gender), WER, linkability, "
+            "and side-channel metrics. Currently returns BASELINE_NOT_IMPLEMENTED. "
+            "Use vp_run_attacker for privacy eval and vp_run_baseline for baseline comparisons."
         ),
         "inputSchema": {
             "type": "object",
@@ -140,7 +141,8 @@ _TOOLS: dict[str, dict[str, Any]] = {
         "description": (
             "Atomically log an experiment to ~/.vpstack/projects/{slug}/experiments/{exp_id}/. "
             "Atomic write contract: no half-state on kill -9. Used by skills (/vp-spike, "
-            "/vp-baseline-compare, /vp-eval) to record results."
+            "/vp-baseline-compare, /vp-eval) to record results. "
+            "Populate hypothesis/method/system_name/tags so vp_search_experiments can find results."
         ),
         "inputSchema": {
             "type": "object",
@@ -148,6 +150,23 @@ _TOOLS: dict[str, dict[str, Any]] = {
                 "exp_id": {"type": "string"},
                 "metrics": {"type": "object"},
                 "config_hash": {"type": "string"},
+                "hypothesis": {
+                    "type": "string",
+                    "description": "One-line hypothesis being tested. Indexed by vp_search_experiments.",
+                },
+                "method": {
+                    "type": "string",
+                    "description": "Short method name (e.g. 'hubert-layer6-farthest'). Indexed by search.",
+                },
+                "system_name": {
+                    "type": "string",
+                    "description": "Human name for this anonymization system variant. Indexed by search.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Free-form tags (e.g. ['semi-informed', 'b2-ablation']). Indexed.",
+                },
             },
             "required": ["exp_id", "metrics", "config_hash"],
         },

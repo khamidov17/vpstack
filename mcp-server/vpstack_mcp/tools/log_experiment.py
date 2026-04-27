@@ -62,8 +62,20 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
         os.close(dir_fd)
 
 
-def handle(exp_id: str, metrics: dict, config_hash: str) -> ToolResult:
-    """Log an experiment atomically. Returns the path it was written to."""
+def handle(
+    exp_id: str,
+    metrics: dict,
+    config_hash: str,
+    hypothesis: str = "",
+    method: str = "",
+    system_name: str = "",
+    tags: list | None = None,
+) -> ToolResult:
+    """Log an experiment atomically. Returns the path it was written to.
+
+    Optional metadata fields (hypothesis, method, system_name, tags) are indexed by
+    vp_search_experiments — populate them so search works beyond exact ID matching.
+    """
     if not _VALID_ID.match(exp_id):
         return err(
             "INVALID_CONFIG",
@@ -93,7 +105,16 @@ def handle(exp_id: str, metrics: dict, config_hash: str) -> ToolResult:
         "config_hash": config_hash,
         "metrics": metrics,
         "vpstack_version_note": "Per design, vpstack version is researcher-tracked, not stored here.",
+        # Optional search-indexed fields — omit from summary if empty to keep files clean.
     }
+    if hypothesis:
+        summary["hypothesis"] = hypothesis
+    if method:
+        summary["method"] = method
+    if system_name:
+        summary["system_name"] = system_name
+    if tags:
+        summary["tags"] = tags if isinstance(tags, list) else [str(tags)]
 
     summary_path = exp_dir / "summary.json"
     try:

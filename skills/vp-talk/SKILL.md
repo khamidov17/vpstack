@@ -123,7 +123,7 @@ Surface tradeoffs in the plan doc.
 ### Step 3: Write the research plan
 
 ```bash
-SLUG=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 mkdir -p ~/.vpstack/projects/$SLUG/research-plans
 PLAN_ID="$(date +%Y%m%d-%H%M%S)-$(echo "$Q1_TEXT" | head -c 40 | tr -c 'a-zA-Z0-9' '-' | sed 's/--*/-/g')"
 ```

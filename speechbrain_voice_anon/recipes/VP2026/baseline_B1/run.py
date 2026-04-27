@@ -95,22 +95,36 @@ def _anonymize_directory(input_dir: Path, output_dir: Path, args: argparse.Names
     return len(wavs)
 
 
-def _run_eval(anonymized_dir: Path, eval_set_dir: Path, args: argparse.Namespace) -> dict:
-    """Run the VP2026 eval suite against anonymized audio.
+def _run_eval(anonymized_dir: Path, eval_set_dir: Path, args: argparse.Namespace) -> None:
+    """VP2026 eval suite — NOT YET IMPLEMENTED in v0.1.0-dev.
 
-    PLACEHOLDER: in v0.1.0-dev this returns sentinel numbers. The real eval
-    pipeline (EER via ASV, WER via ASR, linkability) is implemented in a follow-up.
-    The contract here is: returns a dict with keys eer, wer, linkability — all floats.
+    Emits a structured BASELINE_NOT_IMPLEMENTED error and exits 2 (same contract as
+    baseline_B2/run.py). Never emits NaN — invalid JSON that breaks MCP clients.
+
+    Track progress: https://github.com/khamidov17/vpstack (milestone: B1 eval reproducibility).
+    TODO(v0.2): implement EER via SpeechBrain ECAPA, WER via Whisper or wav2vec2,
+    linkability via ZEBRA/MAP from the VP2024 eval plan PDF.
     """
-    print("baseline_B1: eval pipeline not yet implemented in v0.1.0-dev — returning sentinel.",
-          file=sys.stderr)
-    # TODO(v0.1): implement EER via SpeechBrain ECAPA, WER via Whisper or wav2vec2,
-    # linkability via MAP attack from the VP2024 eval plan PDF.
-    return {
-        "eer": float("nan"),
-        "wer": float("nan"),
-        "linkability": float("nan"),
-    }
+    msg = (
+        "baseline_B1 eval (EER/WER/linkability) is not yet implemented in v0.1.0-dev. "
+        "Anonymization ran successfully — score the output with an external VP2026 eval suite."
+    )
+    hint = (
+        "Anonymized audio is at the output_dir in the result. "
+        "Use vp_run_attacker for privacy eval, or wait for v0.2 which will wire the full pipeline."
+    )
+    if args.output_format == "json":
+        print(json.dumps({
+            "ok": False,
+            "error": {
+                "code": "BASELINE_NOT_IMPLEMENTED",
+                "message": msg,
+                "hint": hint,
+            },
+        }))
+    else:
+        print(f"baseline_B1: {msg}", file=sys.stderr)
+    sys.exit(2)
 
 
 def main() -> int:
@@ -138,26 +152,12 @@ def main() -> int:
     n = _anonymize_directory(data_path, output_dir, args)
     print(f"baseline_B1: anonymized {n} files to {output_dir}", file=sys.stderr)
 
-    # Eval is a placeholder in v0.1.0-dev — see _run_eval docstring.
-    eval_results = _run_eval(output_dir, data_path, args)
-
-    result = {
-        "eer": eval_results["eer"],
-        "wer": eval_results["wer"],
-        "linkability": eval_results["linkability"],
-        "config_hash": _config_hash(args),
-        "n_files_anonymized": n,
-        "output_dir": str(output_dir),
-    }
-
-    if args.output_format == "json":
-        # Single JSON line on stdout — vp_run_baseline parses this.
-        print(json.dumps(result))
-    else:
-        for k, v in result.items():
-            print(f"{k}: {v}")
-
-    return 0
+    # _run_eval is not yet implemented — emits structured error JSON and exits 2.
+    # When eval is implemented, replace this call with real EER/WER/linkability computation
+    # and emit {"eer": float, "wer": float, "linkability": float, "config_hash": str, ...}.
+    _run_eval(output_dir, data_path, args)
+    # unreachable — _run_eval always exits
+    return 2
 
 
 if __name__ == "__main__":

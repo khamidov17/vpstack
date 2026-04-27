@@ -38,19 +38,44 @@ PRETRAINED_ECAPA_HF = "speechbrain/spkrec-ecapa-voxceleb"
 
 def _check_path(label: str, path_str: str, must_have_wav: bool = False) -> str | None:
     """Return None if path is fine; otherwise an error hint string."""
+    import os as _os
     p = Path(path_str).expanduser().resolve()
     if not p.exists():
         return f"{label} does not exist: {p}"
     if not p.is_dir():
         return f"{label} is not a directory: {p}"
     if must_have_wav:
-        # Bounded wav check (mirror run_baseline.py pattern — short-circuit)
-        try:
-            for entry in p.rglob("*.wav"):
-                return None
-        except OSError:
-            pass
-        return f"{label} contains no .wav files: {p}"
+        # Bounded walk: depth 8, cap 1000 dirs — mirrors run_baseline._check_data_path (F6 fix).
+        # The original p.rglob("*.wav") was unbounded; passing ~ or / would OOM the MCP process.
+        max_depth = 8
+        max_dirs = 1000
+
+        def _has_wav(root: Path, remaining: int, scanned: list) -> bool:
+            if remaining < 0 or scanned[0] >= max_dirs:
+                return False
+            scanned[0] += 1
+            try:
+                with _os.scandir(root) as it:
+                    for entry in it:
+                        try:
+                            if entry.is_file(follow_symlinks=False) and entry.name.endswith(".wav"):
+                                return True
+                        except OSError:
+                            continue
+                with _os.scandir(root) as it:
+                    for entry in it:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                if _has_wav(Path(entry.path), remaining - 1, scanned):
+                                    return True
+                        except OSError:
+                            continue
+            except (OSError, PermissionError):
+                return False
+            return False
+
+        if not _has_wav(p, max_depth, [0]):
+            return f"{label} contains no .wav files within {max_depth} levels: {p}"
     return None
 
 

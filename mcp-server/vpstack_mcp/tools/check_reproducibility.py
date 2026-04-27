@@ -38,10 +38,11 @@ def handle(config_path: str) -> ToolResult:
     seed = cfg.get("seed")
     if seed is None:
         issues.append("seed missing — config has no 'seed' key")
-    elif not isinstance(seed, int):
-        issues.append(f"seed must be a single int, got: {type(seed).__name__}")
     elif isinstance(seed, str) and "auto" in seed.lower():
-        issues.append(f"seed appears auto-derived: {seed}")
+        # String seeds like "auto_42" — YAML parses these as str, not int.
+        issues.append(f"seed appears auto-derived: {seed!r}")
+    elif not isinstance(seed, int):
+        issues.append(f"seed must be a single integer, got {type(seed).__name__}: {seed!r}")
     else:
         passed.append(f"seed pinned: {seed}")
 
@@ -57,14 +58,19 @@ def handle(config_path: str) -> ToolResult:
             passed.append(f"splits explicit ({len(splits)} entries)")
 
     # 3. Checkpoint hashes (recipe-specific — checked against a lockfile if present)
+    # CAUTION: v0.1 only verifies that the lockfile EXISTS alongside the config.
+    # It does NOT yet compare declared hashes against lockfile values. A stale or
+    # hand-edited lockfile will still PASS this check. Track: vpstack issue #checkpoint-verify.
     checkpoints = cfg.get("checkpoints") or {}
     lockfile = p.parent / "checkpoints.lock"
     if checkpoints:
         if not lockfile.exists():
             issues.append("checkpoints listed but no checkpoints.lock alongside config")
         else:
-            # TODO v0.1.x: verify each declared hash against the lockfile.
-            passed.append(f"checkpoints declared ({len(checkpoints)} entries) + lockfile present")
+            passed.append(
+                f"checkpoints declared ({len(checkpoints)} entries) — lockfile present "
+                f"(WARNING: hash values NOT verified in v0.1; verify manually or wait for v0.2)"
+            )
 
     # 4. Hparams complete? Recipe-specific. v0.1 just checks that no values are obvious placeholders.
     hparams = cfg.get("hparams") or {}

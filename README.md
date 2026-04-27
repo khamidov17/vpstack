@@ -14,28 +14,101 @@ For researchers in the voice-privacy field: vpstack encodes domain knowledge for
 
 ## Install
 
-### From source (current — 0.1.0-dev)
+### Step 1: Clone the repo
 
 ```bash
 git clone https://github.com/khamidov17/vpstack.git ~/.claude/skills/vpstack
 chmod +x ~/.claude/skills/vpstack/bin/*
 ```
 
-That puts the 6 skills + 7 bin scripts where Claude Code expects them. Restart Claude Code and try `/vp-baseline-compare` in a voice-anonymization project.
-
-For the MCP server (Claude Desktop / Cursor / Codex):
+### Step 2: Install the MCP server
 
 ```bash
 cd ~/.claude/skills/vpstack/mcp-server && pip install -e .
 ```
 
-Then point your MCP client at the `vpstack-mcp` console script.
-
-For the SpeechBrain recipe:
+### Step 3: Install the SpeechBrain recipe (for B1 anonymization)
 
 ```bash
 cd ~/.claude/skills/vpstack/speechbrain_voice_anon && pip install -e .
 ```
+
+### Step 4: Connect your AI coding agent
+
+Pick the client you use. All three support the same stdio MCP server — `vpstack-mcp`.
+
+---
+
+#### Claude Code
+
+The skills directory (`~/.claude/skills/vpstack/`) is already wired by Step 1 — restart Claude Code and type `/vp-baseline-compare` in a voice-anonymization project.
+
+For the MCP tools (called by skills automatically), add via CLI:
+
+```bash
+claude mcp add vpstack -- vpstack-mcp
+```
+
+Or drop `.mcp.json` at your project root (already included in this repo):
+
+```json
+{
+  "mcpServers": {
+    "vpstack": { "command": "vpstack-mcp", "args": [] }
+  }
+}
+```
+
+---
+
+#### Codex CLI
+
+```bash
+# Use the absolute path — Codex may not inherit your shell PATH
+codex mcp add vpstack -- $(which vpstack-mcp)
+
+# Verify
+codex mcp list
+# Name     Command      Status
+# vpstack  vpstack-mcp  enabled
+```
+
+Codex reads `AGENTS.md` at the repo root for domain context (analogous to `CLAUDE.md`). This repo includes one — copy it to your voice-anonymization project as well:
+
+```bash
+cp ~/.claude/skills/vpstack/AGENTS.md /path/to/your/vp2026-project/AGENTS.md
+```
+
+---
+
+#### Cursor
+
+Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-local):
+
+```json
+{
+  "mcpServers": {
+    "vpstack": { "command": "vpstack-mcp", "args": [] }
+  }
+}
+```
+
+If `vpstack-mcp` is not on Cursor's PATH (common), use the absolute path:
+
+```json
+{
+  "mcpServers": {
+    "vpstack": {
+      "command": "/path/to/venv/bin/vpstack-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Find the path with `which vpstack-mcp`. Then reload MCP servers via the Cursor command palette ("Developer: Reload MCP Servers").
+
+---
 
 ### After v0.1.0 publish
 

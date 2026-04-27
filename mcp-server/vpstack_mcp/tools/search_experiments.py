@@ -63,8 +63,10 @@ def handle(query: str, limit: int = 10) -> ToolResult:
         except (json.JSONDecodeError, OSError):
             continue
 
-        # Search across id, hypothesis, method, system_name fields. Substring + case-insensitive.
-        searchable = " ".join(str(summary.get(k, "")) for k in ("id", "hypothesis", "method", "system_name", "tags"))
+        # Search across id + optional metadata fields. Substring + case-insensitive.
+        # hypothesis/method/system_name/tags are written when callers pass them to vp_log_experiment.
+        tags_str = " ".join(summary.get("tags") or [])
+        searchable = " ".join(str(summary.get(k, "")) for k in ("id", "hypothesis", "method", "system_name")) + " " + tags_str
         if q_lower in searchable.lower():
             matches.append({
                 "id": summary.get("id", exp_dir.name),

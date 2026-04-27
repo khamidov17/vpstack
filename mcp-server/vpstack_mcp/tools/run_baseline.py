@@ -125,6 +125,20 @@ def handle(baseline: str, data_path: str, seed: int = 42) -> ToolResult:
         return err("INTERNAL", f"subprocess launch failed: {e}", "")
 
     if proc.returncode != 0:
+        import json as _json
+        # Check if recipe emitted a structured error in stdout (B1/B2 pattern — exit 2
+        # with JSON on stdout containing {"ok": false, "error": {"code": ...}}).
+        try:
+            stdout_json = _json.loads((proc.stdout or "").strip().splitlines()[-1])
+            err_code = stdout_json.get("error", {}).get("code", "")
+            err_msg = stdout_json.get("error", {}).get("message", "")
+            err_hint = stdout_json.get("error", {}).get("hint", "")
+            if err_code and not stdout_json.get("ok", True):
+                if err_code in ("BASELINE_NOT_IMPLEMENTED",):
+                    return err(err_code, err_msg or f"{baseline} eval not yet implemented", err_hint)
+        except (ValueError, IndexError, AttributeError, KeyError):
+            pass
+
         # Inspect stderr for known failure patterns. Keep the prose short — never include
         # the full stack trace (privacy contract: error_class only, not error_body).
         stderr_tail = (proc.stderr or "")[-500:]
@@ -136,7 +150,7 @@ def handle(baseline: str, data_path: str, seed: int = 42) -> ToolResult:
                 "B2 typically needs >=16GB VRAM.",
             )
         if "No such file" in stderr_tail or "FileNotFoundError" in stderr_tail:
-            return err("DATA_MISSING", f"recipe could not find a required file",
+            return err("DATA_MISSING", "recipe could not find a required file",
                        "Verify data_path layout matches VP2026 protocol. "
                        "See speechbrain_voice_anon/recipes/VP2026/README.md")
         if "401" in stderr_tail or "403" in stderr_tail:
@@ -145,10 +159,11 @@ def handle(baseline: str, data_path: str, seed: int = 42) -> ToolResult:
                 "could not download a pretrained model from HuggingFace Hub",
                 "Run `huggingface-cli login` or set HF_TOKEN env var.",
             )
+        # Show the actual tail of stderr, not a truncated slice of a slice.
         return err(
             "RECIPE_FAILED",
             f"baseline {baseline} returned non-zero exit",
-            f"Tail of stderr: {stderr_tail[:200]}",
+            f"Tail of stderr: {stderr_tail[-200:]}",
         )
 
     # Parse the recipe's JSON output. Recipes write a single JSON dict to stdout.
