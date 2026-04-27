@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# vpstack-config — get / set / list user config values at ~/.vpstack/config.json
+#
+# Known keys:
+#   telemetry            off | anonymous | community  (default: anonymous after first prompt)
+#   telemetry_endpoint   URL                          (default: https://telemetry.vpstack.dev/v1/event)
+#   version_check        true | false                 (default: true)
+#   version_endpoint     URL                          (default: https://vpstack.dev/api/version)
+#   activation_override  ask | auto | never           (default: ask)
+#   skip_eng_review      true | false                 (default: false)
+#
+# Usage:
+#   vpstack-config get <key>
+#   vpstack-config set <key> <value>
+#   vpstack-config list
+#   vpstack-config unset <key>
+
+set -euo pipefail
+
+# B4 fix: tolerate HOME unset / weird HOME.
+CONFIG_DIR="${HOME:-/tmp/vpstack-no-home}/.vpstack"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+
+ensure_config() {
+  if ! mkdir -p "$CONFIG_DIR" 2>/dev/null; then
+    echo "vpstack-config: cannot create config dir at $CONFIG_DIR (read-only HOME?)" >&2
+    exit 1
+  fi
+  # B5 fix: if config.json is a directory (or other non-regular file), surface a
+  # clear error instead of crashing in echo redirect or python open().
+  if [ -e "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
+    echo "vpstack-config: $CONFIG_FILE exists but is not a regular file" >&2
+    echo "  Move or remove it manually, then retry." >&2
+    exit 1
+  fi
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo '{}' > "$CONFIG_FILE"
+  fi
+}
+
+# Use python for JSON read/write (bash + jq portability is a mess; python3 is on every macOS/Linux dev box).
+py_get() {
+  ensure_config
+  python3 - "$CONFIG_FILE" "$1" <<'PY'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    cfg = {}
+val = cfg.get(key, "")
+if val is True: print("true")
+elif val is False: print("false")
+elif val is None: print("")
+else: print(val)
+PY
+}
+
+py_set() {
+  ensure_config
+  # B2 fix: a corrupt config.json must NOT be silently destroyed by a `set`.
+  # Previously: JSONDecodeError → cfg={} → atomic-write a fresh file with only
+  # the new key, losing all prior settings. Now: back up the corrupt file and
+  # refuse the write, with a clear message and recovery path.
+  python3 - "$CONFIG_FILE" "$1" "$2" <<'PY'
+import json, os, shutil, sys, time
+path, key, val = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+    if not isinstance(cfg, dict):
+        raise json.JSONDecodeError("config root must be an object", "", 0)
+except FileNotFoundError:
+    cfg = {}
+except json.JSONDecodeError as e:
+    backup = f"{path}.bak-{int(time.time())}"
+    shutil.copy2(path, backup)
+    print(f"vpstack-config: config.json is invalid JSON: {e}", file=sys.stderr)
+    print(f"  Backed up to: {backup}", file=sys.stderr)
+    print(f"  Refusing to overwrite — fix the original or restore from backup, then retry.", file=sys.stderr)
+    print(f"  To repair from scratch: rm {path}", file=sys.stderr)
+    sys.exit(1)
+
+# Coerce booleans
+if val.lower() == "true": val = True
+elif val.lower() == "false": val = False
+cfg[key] = val
+# Atomic write (write to .tmp, fsync, rename)
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2, sort_keys=True)
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp, path)
+PY
+}
+
+py_unset() {
+  ensure_config
+  python3 - "$CONFIG_FILE" "$1" <<'PY'
+import json, sys, os
+path, key = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    cfg = {}
+cfg.pop(key, None)
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2, sort_keys=True)
+os.replace(tmp, path)
+PY
+}
+
+py_list() {
+  ensure_config
+  python3 - "$CONFIG_FILE" <<'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    cfg = {}
+for k in sorted(cfg):
+    print(f"{k}={cfg[k]}")
+PY
+}
+
+case "${1:-}" in
+  get)
+    [ -z "${2:-}" ] && { echo "usage: vpstack-config get <key>" >&2; exit 2; }
+    py_get "$2"
+    ;;
+  set)
+    if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+      echo "usage: vpstack-config set <key> <value>" >&2; exit 2
+    fi
+    # Known-key allowlist for value validation. B3 fix: anything outside the list
+    # gets rejected by default — an unknown key is almost always a typo (e.g.,
+    # `telemerty=off` instead of `telemetry=off`), and silently accepting a typo
+    # is a privacy footgun (user thinks they disabled telemetry; they didn't).
+    case "$2" in
+      telemetry)
+        case "$3" in off|anonymous|community) ;; *) echo "telemetry must be off|anonymous|community" >&2; exit 2 ;; esac
+        ;;
+      activation_override)
+        case "$3" in ask|auto|never) ;; *) echo "activation_override must be ask|auto|never" >&2; exit 2 ;; esac
+        ;;
+      version_check|skip_eng_review)
+        case "$3" in true|false) ;; *) echo "$2 must be true|false" >&2; exit 2 ;; esac
+        ;;
+      telemetry_endpoint|version_endpoint)
+        # URLs — no value validation (user may use a custom endpoint), but check shape
+        case "$3" in http://*|https://*) ;; *) echo "$2 must be a http(s):// URL" >&2; exit 2 ;; esac
+        ;;
+      *)
+        # Unknown key — reject with a list of known keys. Override with VPSTACK_CONFIG_UNSAFE=1
+        # for advanced users who genuinely need to add experimental keys.
+        if [ "${VPSTACK_CONFIG_UNSAFE:-}" != "1" ]; then
+          echo "vpstack-config: unknown key: $2" >&2
+          echo "  Known keys: telemetry, telemetry_endpoint, version_check, version_endpoint, activation_override, skip_eng_review" >&2
+          echo "  If this is intentional, set VPSTACK_CONFIG_UNSAFE=1 and re-run." >&2
+          exit 2
+        fi
+        ;;
+    esac
+    py_set "$2" "$3"
+    ;;
+  unset)
+    [ -z "${2:-}" ] && { echo "usage: vpstack-config unset <key>" >&2; exit 2; }
+    py_unset "$2"
+    ;;
+  list|"")
+    py_list
+    ;;
+  -h|--help)
+    sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+    ;;
+  *)
+    echo "usage: vpstack-config {get|set|unset|list} [args]" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,40 @@
+# B2 (neural) hyperparameters — VP2026 baseline. STUB.
+# Re-implementation pending. NOT a port of VP2024 GPLv3 code.
+
+baseline: B2
+seed: 42
+
+# Models — lazy-fetched from HuggingFace Hub at runtime
+content_encoder:
+  model: facebook/hubert-base-ls960
+  layer_idx: 6                    # Per Liu et al. 2024 — layer 6 emphasizes content
+  license: Apache-2.0
+
+speaker_encoder:
+  model: speechbrain/spkrec-ecapa-voxceleb
+  license: Apache-2.0
+
+vocoder:
+  model: jik876/hifi-gan          # reference + LibriTTS fine-tune for anon use
+  variant: vp_finetuned           # or v1_universal
+  license: MIT
+  copyright: "Copyright (c) 2020 Jungil Kong"
+
+# Anonymization
+anonymizer:
+  strategy: farthest_point        # ECAPA-based farthest-target speaker selection
+  target_pool_size: 200
+
+# Determinism
+deterministic: true
+n_seeds: 3                        # for variance estimation across runs
+
+# Eval
+eval_set: dev
+sample_rate: 16000
+
+# Splits
+data:
+  trial_list: PROVIDE_AT_RUNTIME
+  enrollment: PROVIDE_AT_RUNTIME
+  evaluation_audio: PROVIDE_AT_RUNTIME

@@ -1,0 +1,45 @@
+{
+  "name": "vpstack",
+  "version": "0.1.0-dev",
+  "description": "VP2026 voice-privacy toolkit for AI coding agents (Claude Code, Codex, Cursor, Claude Desktop). Domain-aware skills + MCP server + SpeechBrain recipe.",
+  "keywords": [
+    "voice-anonymization",
+    "voice-privacy",
+    "vp2026",
+    "speech",
+    "speechbrain",
+    "claude-code",
+    "mcp",
+    "anthropic"
+  ],
+  "homepage": "https://github.com/vpstack/vpstack",
+  "bugs": {
+    "url": "https://github.com/vpstack/vpstack/issues"
+  },
+  "license": "Apache-2.0",
+  "author": "vpstack contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vpstack/vpstack.git"
+  },
+  "bin": {
+    "vpstack": "bin/vpstack-install",
+    "vpstack-config": "bin/vpstack-config",
+    "vpstack-detect": "bin/vpstack-detect",
+    "vpstack-update-check": "bin/vpstack-update-check",
+    "vpstack-upgrade": "bin/vpstack-upgrade",
+    "vpstack-telemetry-log": "bin/vpstack-telemetry-log",
+    "vpstack-skill-init": "bin/vpstack-skill-init"
+  },
+  "files": [
+    "bin/",
+    "skills/",
+    "VERSION",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES.md",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

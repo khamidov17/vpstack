@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# vpstack-detect — decide whether the current project is voice-anonymization work.
+#
+# Outputs one of:
+#   ENABLED_EXPLICIT     — <repo>/.vpstack/enabled is present, proceed
+#   DISABLED_EXPLICIT    — <repo>/.vpstack/disabled is present, silent exit
+#   DETECTED_CONFIRMED   — heuristic match, user confirmed previously, proceed
+#   DETECTED_FIRST_RUN   — heuristic match, no prior decision, prompt user once
+#   NO_MATCH             — no signal, silent exit
+#
+# Optional second line: "REASON: <human-readable explanation>"
+#
+# Marker precedence (per design [B2]): disabled > enabled > detected.
+# Parent traversal stops at: git toplevel, $HOME, filesystem root, or 16-level cap.
+# Result is cached for 5 minutes per CWD at ~/.vpstack/cache/detect-{cwd_sha} (per [P1]).
+#
+# Usage:
+#   vpstack-detect              # human-readable
+#   vpstack-detect --quiet      # outcome only, no REASON line
+#   vpstack-detect --no-cache   # bypass cache, force re-detection
+
+set -euo pipefail
+
+# --- args ---
+QUIET=0
+USE_CACHE=1
+for arg in "$@"; do
+  case "$arg" in
+    --quiet) QUIET=1 ;;
+    --no-cache) USE_CACHE=0 ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+      exit 0
+      ;;
+  esac
+done
+
+# --- helpers ---
+emit() {
+  echo "$1"
+  if [ "$QUIET" -eq 0 ] && [ -n "${2:-}" ]; then
+    echo "REASON: $2"
+  fi
+}
+
+# Hash CWD path for cache key. sha256sum on Linux, shasum on macOS.
+hash_cwd() {
+  local p="$PWD"
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$p" | sha256sum | cut -c1-16
+  else
+    printf '%s' "$p" | shasum -a 256 | cut -c1-16
+  fi
+}
+
+# Find nearest ancestor containing one of the named files.
+# Stops at: filesystem root, $HOME boundary, git toplevel (after checking it), or 16-level cap.
+# The 16-level cap is a safety bound; legitimate project layouts are typically under 8 levels deep.
+find_ancestor() {
+  local target="$1"
+  local cur="$PWD"
+  local git_top home_dir
+  git_top=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  home_dir="${HOME:-}"
+
+  local i=0
+  while [ "$i" -lt 16 ]; do
+    if [ -e "$cur/$target" ]; then
+      echo "$cur/$target"
+      return 0
+    fi
+    # Stop AFTER checking the boundary, so the boundary dir itself gets scanned for markers
+    if [ "$cur" = "/" ] || [ -z "$cur" ]; then return 1; fi
+    if [ -n "$git_top" ] && [ "$cur" = "$git_top" ]; then return 1; fi
+    if [ -n "$home_dir" ] && [ "$cur" = "$home_dir" ]; then return 1; fi
+    cur=$(dirname "$cur")
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# --- cache check ---
+# B4 fix: tolerate HOME unset / weird HOME — fall back to /tmp instead of crashing.
+CACHE_DIR="${HOME:-/tmp/vpstack-no-home}/.vpstack/cache"
+CACHE_FILE="${CACHE_DIR}/detect-$(hash_cwd)"
+
+# Allowlist of valid first-line outcomes. Used both for cache validation (B1)
+# and to filter on read with --quiet (B11).
+_valid_outcome() {
+  case "$1" in
+    ENABLED_EXPLICIT|DISABLED_EXPLICIT|DETECTED_FIRST_RUN|DETECTED_CONFIRMED|NO_MATCH) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "$USE_CACHE" -eq 1 ] && [ -f "$CACHE_FILE" ]; then
+  # 300 seconds = 5 minutes
+  if find "$CACHE_FILE" -mmin -5 -print -quit 2>/dev/null | grep -q .; then
+    # B1 fix: validate cache contents before trusting them. A corrupt cache file
+    # (rare but possible — concurrent crash, disk-full mid-write, manual edit)
+    # would otherwise propagate an unknown ACTIVATION value into every skill,
+    # bypassing every documented case branch.
+    cached_outcome=$(head -1 "$CACHE_FILE" 2>/dev/null || echo "")
+    if _valid_outcome "$cached_outcome"; then
+      # B11 fix: honor --quiet on cache hit. Strip REASON line if requested.
+      if [ "$QUIET" -eq 1 ]; then
+        echo "$cached_outcome"
+      else
+        cat "$CACHE_FILE"
+      fi
+      exit 0
+    else
+      # Cache is corrupt — silently invalidate and fall through to fresh detection
+      rm -f "$CACHE_FILE" 2>/dev/null || true
+    fi
+  fi
+fi
+
+# --- explicit markers (highest precedence) ---
+DISABLED_PATH=$(find_ancestor ".vpstack/disabled" || true)
+ENABLED_PATH=$(find_ancestor ".vpstack/enabled" || true)
+
+# disabled wins — even if both files exist (user error or stale state)
+if [ -n "$DISABLED_PATH" ]; then
+  if [ -n "$ENABLED_PATH" ]; then
+    >&2 echo "vpstack-detect: warning — both .vpstack/enabled and .vpstack/disabled present at $(dirname "$DISABLED_PATH"). Treating as DISABLED."
+  fi
+  result="DISABLED_EXPLICIT"
+  reason="found $DISABLED_PATH"
+elif [ -n "$ENABLED_PATH" ]; then
+  result="ENABLED_EXPLICIT"
+  reason="found $ENABLED_PATH"
+else
+  # --- heuristic detection ---
+  matched=()
+
+  # Signal 1 already handled above (enabled marker is the explicit form of signal 1)
+
+  # Signal 2: vp_config.yaml in project root (search ancestors bounded same way)
+  if [ -n "$(find_ancestor 'vp_config.yaml' 2>/dev/null || true)" ]; then
+    matched+=("vp_config.yaml present")
+  fi
+
+  # Signal 3: speechbrain listed in deps (loosened to OR per F9 — first-run prompt covers FPs)
+  for dep_file in requirements.txt pyproject.toml environment.yml setup.py; do
+    found=$(find_ancestor "$dep_file" 2>/dev/null || true)
+    if [ -n "$found" ] && grep -qiE '(^|[^a-z])speechbrain([^a-z]|$)' "$found" 2>/dev/null; then
+      matched+=("speechbrain dep in $dep_file")
+      break
+    fi
+  done
+
+  # Signal 4: CLAUDE.md or README.md mentions VP2026 / voice anonymization
+  for doc_file in CLAUDE.md README.md README.rst; do
+    found=$(find_ancestor "$doc_file" 2>/dev/null || true)
+    if [ -n "$found" ] && grep -qiE '(VP2026|voice anonymization|voice anonymisation|voice privacy)' "$found" 2>/dev/null; then
+      matched+=("voice-related text in $doc_file")
+      break
+    fi
+  done
+
+  # Signal 5: project path matches voice-related patterns
+  case "$PWD" in
+    *VP2026*|*vp2026*|*voice-anon*|*voice_anon*|*voice-privacy*|*voice_privacy*|*VoicePrivacy*)
+      matched+=("path matches voice pattern")
+      ;;
+  esac
+
+  if [ "${#matched[@]}" -eq 0 ]; then
+    result="NO_MATCH"
+    reason=""
+  else
+    # Has heuristic match. Has the user already decided for this project?
+    # We use a per-project answer file at <project_root>/.vpstack/.first-run-answered
+    # OR a global answer file at ~/.vpstack/projects-decided (a list of project hashes)
+    PROJECT_HASH=$(hash_cwd)
+    DECIDED_FILE="${HOME}/.vpstack/projects-decided"
+    if [ -f "$DECIDED_FILE" ] && grep -qF "$PROJECT_HASH" "$DECIDED_FILE" 2>/dev/null; then
+      result="DETECTED_CONFIRMED"
+    else
+      result="DETECTED_FIRST_RUN"
+    fi
+    reason="${matched[*]}"
+  fi
+fi
+
+# --- emit + write cache ---
+# Always emit to stdout first — that's the contract. Cache write is best-effort:
+# B4 fix: if HOME is unset, points at a file, or is read-only, mkdir/mv will fail.
+# We must never crash a skill preamble over an unwritable cache. Skip caching silently.
+emit_result() {
+  echo "$result"
+  if [ "$QUIET" -eq 0 ] && [ -n "${reason:-}" ]; then
+    echo "REASON: $reason"
+  fi
+}
+
+# Try to write the cache atomically. On any failure (no HOME, mkdir denied,
+# disk full, mv across filesystems), fall back to plain stdout emit.
+if mkdir -p "$CACHE_DIR" 2>/dev/null; then
+  # F7 fix: atomic write. Two parallel skills on the same dir would otherwise
+  # interleave bytes via `tee`, producing a garbled cache.
+  TMP_CACHE="${CACHE_FILE}.$$.$(date +%s).tmp"
+  if emit_result > "$TMP_CACHE" 2>/dev/null && mv -f "$TMP_CACHE" "$CACHE_FILE" 2>/dev/null; then
+    cat "$CACHE_FILE"
+    exit 0
+  fi
+  # Cleanup partial tmp on failure
+  rm -f "$TMP_CACHE" 2>/dev/null || true
+fi
+# Fallback: cache unavailable, just emit to stdout. Same content, no persistence.
+emit_result

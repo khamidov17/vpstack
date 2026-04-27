@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# vpstack-telemetry-log — opt-in telemetry. Three modes (off / anonymous / community).
+#
+# Privacy contract (NEVER violated):
+#   - off:        zero network calls, this script exits immediately
+#   - anonymous:  POST {skill, duration_s, outcome, vpstack_version} only — no device ID, no session linkage
+#   - community:  anonymous fields + stable device_id (hash of machine UUID + user) + error class
+#
+# NEVER sent in any mode:
+#   - code, file paths, hypothesis text, eval numbers, repo names, branch names
+#   - hyperparameters, seeds, config hashes, user prompts, error message bodies
+#
+# Usage:
+#   vpstack-telemetry-log --skill vp-eval --duration 42 --outcome success
+#   vpstack-telemetry-log --skill vp-spike --duration 12 --outcome error --error-class GPU_OOM
+
+set -euo pipefail
+
+# Parse args
+SKILL=""
+DURATION=""
+OUTCOME=""
+ERROR_CLASS=""
+VERBOSE=0
+DRY_RUN=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skill) SKILL="$2"; shift 2 ;;
+    --duration) DURATION="$2"; shift 2 ;;
+    --outcome) OUTCOME="$2"; shift 2 ;;
+    --error-class) ERROR_CLASS="$2"; shift 2 ;;
+    --verbose) VERBOSE=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) shift ;;
+  esac
+done
+
+log() { [ "$VERBOSE" -eq 1 ] && >&2 echo "telemetry: $*" || true; }
+
+# Read mode from config
+SCRIPT_DIR="$(dirname "$0")"
+MODE=$("${SCRIPT_DIR}/vpstack-config" get telemetry 2>/dev/null || echo "")
+[ -z "$MODE" ] && MODE="off"
+
+# Off mode: hard exit before any network code path runs (CG3 contract)
+if [ "$MODE" = "off" ]; then
+  log "mode=off, no network call"
+  exit 0
+fi
+
+# Validate inputs (basic)
+[ -z "$SKILL" ] && { log "missing --skill"; exit 0; }
+[ -z "$OUTCOME" ] && { log "missing --outcome"; exit 0; }
+
+# Sanitize skill name — only allow [a-z0-9-] and the vp- prefix. Anything else = drop.
+if ! echo "$SKILL" | grep -qE '^vp-[a-z0-9-]+$'; then
+  log "skill name not in allowlist: $SKILL — dropping"
+  exit 0
+fi
+
+# Sanitize outcome to known set
+case "$OUTCOME" in
+  success|error|abort|unknown) ;;
+  *) log "outcome not in allowlist: $OUTCOME — dropping"; exit 0 ;;
+esac
+
+# Sanitize error class to UPPER_SNAKE_CASE only
+if [ -n "$ERROR_CLASS" ] && ! echo "$ERROR_CLASS" | grep -qE '^[A-Z][A-Z0-9_]{0,31}$'; then
+  log "error class malformed: $ERROR_CLASS — dropping field"
+  ERROR_CLASS=""
+fi
+
+# Resolve version
+VERSION_FILE="${SCRIPT_DIR}/../VERSION"
+VPSTACK_VERSION=$([ -f "$VERSION_FILE" ] && tr -d '[:space:]' < "$VERSION_FILE" || echo "unknown")
+
+# Build payload via python (escapes safely; jq isn't ubiquitous)
+PAYLOAD=$(MODE="$MODE" SKILL="$SKILL" DURATION="$DURATION" OUTCOME="$OUTCOME" \
+          ERROR_CLASS="$ERROR_CLASS" VPSTACK_VERSION="$VPSTACK_VERSION" \
+          python3 - <<'PY'
+import os, json, hashlib, platform, getpass
+from datetime import datetime, timezone  # F4 fix: tz-aware, not the deprecated utcnow()
+
+mode = os.environ["MODE"]
+# Base payload (anonymous + community both get these — NO ts, NO device_id by default)
+payload = {
+    "skill": os.environ["SKILL"],
+    "outcome": os.environ["OUTCOME"],
+    "vpstack_version": os.environ["VPSTACK_VERSION"],
+}
+duration = os.environ.get("DURATION", "")
+# B6 fix: validate duration. isdigit() returns False for "-5" (silently dropped
+# negative durations would mask broken upstream timing) and True for any-length
+# pos integer (>2^53 is unsafe in JSON parsers; 1e8 seconds is ~3 years, which
+# is also nonsense). Allow up to 7 digits = ~115 days, way past any real skill run.
+import re
+if re.match(r"^\d{1,7}$", duration):
+    payload["duration_s"] = int(duration)
+# Else: silently drop. Upstream caller bug — telemetry can't fix it.
+
+if mode == "community":
+    # Community mode adds:
+    #   - ts (UTC ISO 8601) — server can already stamp arrival, but having client ts
+    #     helps when the server batches; NOT included in anonymous to prevent
+    #     fingerprinting of "anonymous" sessions via timing distribution.
+    #   - device_id (stable hash of machine UUID + user)
+    #   - error_class (UPPER_SNAKE_CASE only)
+    payload["ts"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        machine_id = ""
+        if os.path.exists("/etc/machine-id"):
+            with open("/etc/machine-id") as f:
+                machine_id = f.read().strip()
+        elif platform.system() == "Darwin":
+            import subprocess
+            try:
+                out = subprocess.check_output(
+                    ["ioreg", "-d2", "-c", "IOPlatformExpertDevice"],
+                    stderr=subprocess.DEVNULL, timeout=2,
+                )
+                for line in out.decode().splitlines():
+                    if "IOPlatformUUID" in line:
+                        machine_id = line.split('"')[-2]
+                        break
+            except Exception:
+                pass
+        if not machine_id:
+            machine_id = "unknown"
+        device_seed = f"{machine_id}::{getpass.getuser()}"
+        payload["device_id"] = hashlib.sha256(device_seed.encode()).hexdigest()[:16]
+    except Exception:
+        payload["device_id"] = "unknown"
+
+    err = os.environ.get("ERROR_CLASS", "")
+    if err:
+        payload["error_class"] = err
+
+# anonymous mode = base payload only. No ts, no device_id, no error_class.
+# This is the "just a counter" promise.
+
+# FINAL SANITIZATION: strict allowlist of permitted keys (defense in depth — CG4).
+# ts and device_id and error_class are conditionally allowed, but only if they
+# were already populated above (anonymous mode never reaches that branch).
+allowed_keys = {"skill", "outcome", "vpstack_version", "ts", "duration_s", "device_id", "error_class"}
+payload = {k: v for k, v in payload.items() if k in allowed_keys}
+
+print(json.dumps(payload))
+PY
+)
+
+log "payload: $PAYLOAD"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "$PAYLOAD"
+  exit 0
+fi
+
+# Resolve endpoint
+ENDPOINT=$("${SCRIPT_DIR}/vpstack-config" get telemetry_endpoint 2>/dev/null || true)
+[ -z "$ENDPOINT" ] && ENDPOINT="https://telemetry.vpstack.dev/v1/event"
+
+# Background POST. Never blocks. 2s timeout. No retries (drop on failure).
+(
+  curl -fsS -X POST -H 'Content-Type: application/json' \
+    --max-time 2 \
+    --data "$PAYLOAD" \
+    "$ENDPOINT" >/dev/null 2>&1 || true
+) &
+disown >/dev/null 2>&1 || true
+
+exit 0

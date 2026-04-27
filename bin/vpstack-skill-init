@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# vpstack-skill-init — shared preamble logic for every vpstack skill.
+#
+# Skills source this in their preamble. It does:
+#   1. Activation check via vpstack-detect
+#      - NO_MATCH or DISABLED_EXPLICIT → exit 0 silently (skill never loads)
+#      - DETECTED_FIRST_RUN → emit FIRST_RUN_PROMPT (skill body shows the prompt)
+#      - ENABLED_EXPLICIT or DETECTED_CONFIRMED → proceed
+#   2. Update check (non-blocking)
+#   3. Telemetry start timestamp
+#
+# Outputs (one per line, key=value):
+#   ACTIVATION=<one of detect outputs>
+#   ACTIVATION_REASON=<human readable, may be empty>
+#   UPGRADE_AVAILABLE=<empty | "<old> <new>">
+#   TEL_START=<unix seconds>
+#   SESSION_ID=<pid-timestamp>
+#   VPSTACK_VERSION=<version>
+#   HEADLESS=<0|1>
+#
+# Skills consume these via:
+#   eval "$(vpstack-skill-init)"
+#   case "$ACTIVATION" in
+#     NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
+#     DETECTED_FIRST_RUN) [show first-run AskUserQuestion] ;;
+#   esac
+#
+# Headless mode (--headless OR no TTY): treats DETECTED_FIRST_RUN as DISABLED_EXPLICIT
+# so skills don't hang on input in CI.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Detect headless mode (CI / non-interactive contexts).
+# F12 fix: do NOT auto-detect from TTY. Claude Code and other AI harnesses capture
+# stdout, so `! -t 1` would always be true under them — coercing every first-run
+# detection to silent-disable, killing the prompt. Require explicit opt-in.
+HEADLESS=0
+for arg in "$@"; do
+  case "$arg" in
+    --headless) HEADLESS=1 ;;
+  esac
+done
+# Explicit env-var override for CI runners that can't pass --headless through their harness
+if [ "${VPSTACK_HEADLESS:-}" = "1" ] || [ "${CI:-}" = "true" ]; then
+  HEADLESS=1
+fi
+
+# 1. Activation
+DETECT_OUT=$("${SCRIPT_DIR}/vpstack-detect" 2>/dev/null || echo "NO_MATCH")
+ACTIVATION=$(echo "$DETECT_OUT" | head -1)
+ACTIVATION_REASON=$(echo "$DETECT_OUT" | grep '^REASON: ' | sed 's/^REASON: //' || echo "")
+
+# Headless override: never prompt
+if [ "$HEADLESS" -eq 1 ] && [ "$ACTIVATION" = "DETECTED_FIRST_RUN" ]; then
+  ACTIVATION="DISABLED_EXPLICIT"
+  ACTIVATION_REASON="headless mode — first-run prompt suppressed"
+fi
+
+# 2. Update check (non-blocking, cached, network failure = silent skip)
+UPGRADE_AVAILABLE=$("${SCRIPT_DIR}/vpstack-update-check" --quiet 2>/dev/null || echo "")
+# Strip the leading "UPGRADE_AVAILABLE " prefix if present, since we re-emit it as a key=value
+UPGRADE_AVAILABLE="${UPGRADE_AVAILABLE#UPGRADE_AVAILABLE }"
+
+# 3. Session and version
+TEL_START=$(date +%s)
+SESSION_ID="$$-$TEL_START"
+VERSION_FILE="${SCRIPT_DIR}/../VERSION"
+VPSTACK_VERSION=$([ -f "$VERSION_FILE" ] && tr -d '[:space:]' < "$VERSION_FILE" || echo "unknown")
+
+# Emit — every value goes through `printf %q` so eval-back is safe even if a value
+# contains shell metacharacters (e.g., a path with `"` or `$(...)`). Without this,
+# a hostile dirname in a checked-out repo could inject commands when a skill runs
+# `eval "$(vpstack-skill-init)"`. (F1 fix from code review.)
+emit_kv() {
+  # printf %q is a bash builtin — produces shell-escaped output safe for eval.
+  printf '%s=%s\n' "$1" "$(printf '%q' "$2")"
+}
+emit_kv ACTIVATION "$ACTIVATION"
+emit_kv ACTIVATION_REASON "$ACTIVATION_REASON"
+emit_kv UPGRADE_AVAILABLE "$UPGRADE_AVAILABLE"
+emit_kv SESSION_ID "$SESSION_ID"
+emit_kv VPSTACK_VERSION "$VPSTACK_VERSION"
+# Numerics — no quoting needed, but pass through %q for consistency
+echo "TEL_START=$TEL_START"
+echo "HEADLESS=$HEADLESS"

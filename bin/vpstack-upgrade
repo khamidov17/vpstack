@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# vpstack-upgrade — pull and install the latest vpstack via npm.
+#
+# Called by skills when UPGRADE_AVAILABLE is detected and user confirms.
+#
+# Usage:
+#   vpstack-upgrade               # interactive: shows version, asks confirm, installs
+#   vpstack-upgrade --yes         # non-interactive
+#   vpstack-upgrade --check       # print what version would be installed, do nothing
+
+set -euo pipefail
+
+YES=0
+CHECK_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y) YES=1 ;;
+    --check) CHECK_ONLY=1 ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+  esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALLED=$(tr -d '[:space:]' < "${SCRIPT_DIR}/../VERSION" 2>/dev/null || echo "unknown")
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "vpstack-upgrade: npm not found on PATH. Install Node.js first: https://nodejs.org" >&2
+  exit 1
+fi
+
+# Resolve latest from npm registry
+LATEST=$(npm view vpstack version 2>/dev/null || echo "")
+if [ -z "$LATEST" ]; then
+  echo "vpstack-upgrade: could not reach npm registry" >&2
+  exit 1
+fi
+
+echo "Installed: $INSTALLED"
+echo "Latest:    $LATEST"
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  exit 0
+fi
+
+if [ "$INSTALLED" = "$LATEST" ]; then
+  echo "Already up to date."
+  exit 0
+fi
+
+if [ "$YES" -eq 0 ]; then
+  printf "Upgrade vpstack to %s? [Y/n] " "$LATEST"
+  read -r ans
+  case "${ans:-Y}" in
+    Y|y|"") ;;
+    *) echo "Aborted."; exit 0 ;;
+  esac
+fi
+
+# Run the upgrade. `npx vpstack@latest --upgrade` triggers vpstack-install with --upgrade flag.
+exec npx -y "vpstack@${LATEST}" --upgrade

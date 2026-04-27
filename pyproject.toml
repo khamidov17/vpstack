@@ -1,0 +1,37 @@
+# Top-level pyproject.toml — used for pytest config + dev tooling that spans both
+# Python sub-packages (mcp-server/ and speechbrain_voice_anon/).
+#
+# The actual package metadata lives in:
+#   mcp-server/pyproject.toml          → vpstack-mcp on PyPI
+#   speechbrain_voice_anon/pyproject.toml → speechbrain-voice-anon on PyPI
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "gpu: requires a GPU (skipped by default in CI smoke runs)",
+    "slow: takes >30s (skipped in quick runs)",
+    "integration: requires external services or data",
+]
+# Skip GPU-marked tests by default. Override with `pytest -m gpu` in CI.
+addopts = "-m 'not gpu' --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+    "build/",
+    "dist/",
+    ".venv/",
+    "node_modules/",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]  # line length already configured via line-length above
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # tests sometimes need late imports

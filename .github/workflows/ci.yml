@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyyaml numpy scipy soundfile
+          # Install both Python sub-packages in editable mode
+          pip install -e ./mcp-server || true
+          pip install -e ./speechbrain_voice_anon || true
+
+      - name: Run deterministic tests (skip GPU/data gates)
+        run: pytest -m "not gpu" --tb=short -v
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check . || true   # warnings only on first land
+
+  bash-scripts:
+    name: bin/ script smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make scripts executable
+        run: chmod +x bin/*
+
+      - name: Smoke test bin/vpstack-detect
+        run: |
+          # In an empty dir, vpstack should NOT detect voice work
+          mkdir -p /tmp/non-voice && cd /tmp/non-voice
+          out=$(${{ github.workspace }}/bin/vpstack-detect --no-cache)
+          echo "$out"
+          [ "$(echo "$out" | head -1)" = "NO_MATCH" ] || (echo "FAIL: empty dir detected as voice"; exit 1)
+
+      - name: Smoke test bin/vpstack-config
+        run: |
+          ${{ github.workspace }}/bin/vpstack-config set telemetry off
+          val=$(${{ github.workspace }}/bin/vpstack-config get telemetry)
+          [ "$val" = "off" ] || (echo "FAIL: config get/set"; exit 1)
+
+  package-lint:
+    name: Package metadata sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Validate VERSION file matches pyproject.toml versions
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          MCP_VERSION=$(grep -m1 'version = ' mcp-server/pyproject.toml | cut -d'"' -f2)
+          RECIPE_VERSION=$(grep -m1 'version = ' speechbrain_voice_anon/pyproject.toml | cut -d'"' -f2)
+          NPM_VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION:        $VERSION"
+          echo "mcp-server:     $MCP_VERSION"
+          echo "recipe:         $RECIPE_VERSION"
+          echo "package.json:   $NPM_VERSION"
+          # Atomic version policy: all four must match (modulo .dev → -dev style differences)
+          v_normalized() { echo "$1" | sed 's/-dev/.dev0/' ; }
+          [ "$(v_normalized $VERSION)" = "$(v_normalized $MCP_VERSION)" ] || (echo "FAIL: VERSION/mcp mismatch"; exit 1)
+          [ "$(v_normalized $VERSION)" = "$(v_normalized $RECIPE_VERSION)" ] || (echo "FAIL: VERSION/recipe mismatch"; exit 1)
+          [ "$(v_normalized $VERSION)" = "$(v_normalized $NPM_VERSION)" ] || (echo "FAIL: VERSION/npm mismatch"; exit 1)
+          echo "All versions match."

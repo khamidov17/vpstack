@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# vpstack-update-check — check for new vpstack version, print UPGRADE_AVAILABLE if behind.
+#
+# - Pings the version endpoint (default: https://vpstack.dev/api/version) with 1s timeout.
+# - Cached for 6 hours via mtime on ~/.vpstack/cache/version-check.
+# - Network failure = silent skip (never blocks the workflow).
+# - Output: nothing OR  "UPGRADE_AVAILABLE <installed> <latest>"
+#
+# Usage:
+#   vpstack-update-check                # uses cache if fresh
+#   vpstack-update-check --no-cache     # force re-check
+#   vpstack-update-check --quiet        # output nothing on errors (default)
+#   vpstack-update-check --verbose      # diagnostic info to stderr
+
+set -euo pipefail
+
+USE_CACHE=1
+VERBOSE=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-cache) USE_CACHE=0 ;;
+    --verbose) VERBOSE=1 ;;
+    --quiet) VERBOSE=0 ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+  esac
+done
+
+log() { [ "$VERBOSE" -eq 1 ] && >&2 echo "vpstack-update-check: $*" || true; }
+
+# Honor user opt-out
+if [ -x "$(dirname "$0")/vpstack-config" ]; then
+  vc=$("$(dirname "$0")/vpstack-config" get version_check 2>/dev/null || echo "")
+  if [ "$vc" = "false" ]; then
+    log "version_check disabled in config"
+    exit 0
+  fi
+fi
+
+CACHE_DIR="${HOME}/.vpstack/cache"
+CACHE_FILE="${CACHE_DIR}/version-check"
+mkdir -p "$CACHE_DIR"
+
+# 6 hours = 360 minutes
+if [ "$USE_CACHE" -eq 1 ] && [ -f "$CACHE_FILE" ]; then
+  if find "$CACHE_FILE" -mmin -360 -print -quit 2>/dev/null | grep -q .; then
+    log "using cache"
+    cat "$CACHE_FILE"
+    exit 0
+  fi
+fi
+
+# Resolve installed version
+SCRIPT_DIR="$(dirname "$0")"
+VERSION_FILE="${SCRIPT_DIR}/../VERSION"
+if [ -f "$VERSION_FILE" ]; then
+  INSTALLED=$(tr -d '[:space:]' < "$VERSION_FILE")
+else
+  log "no VERSION file at $VERSION_FILE"
+  exit 0
+fi
+
+# Resolve endpoint
+ENDPOINT=$("$(dirname "$0")/vpstack-config" get version_endpoint 2>/dev/null || true)
+[ -z "$ENDPOINT" ] && ENDPOINT="https://vpstack.dev/api/version"
+
+# Fetch latest. F9 fix: 2s timeout (was 1s — too tight under modest network latency,
+# would defeat the cache-update path on first call). 6h cache window absorbs the
+# extra second when fresh; total user-perceived cost is ~2s once per 6 hours.
+LATEST=$(curl -fsSL --max-time 2 "$ENDPOINT" 2>/dev/null | head -c 64 | tr -d '[:space:]' || true)
+
+if [ -z "$LATEST" ]; then
+  log "version endpoint unreachable or empty (silent skip)"
+  # Don't write empty cache — try again on next call
+  exit 0
+fi
+
+# Validate latest looks like a version
+if ! echo "$LATEST" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9]+)*$'; then
+  log "endpoint returned malformed version: $LATEST"
+  exit 0
+fi
+
+# Compare via sort -V (version sort). Skip dev suffixes for comparison.
+INSTALLED_CLEAN=$(echo "$INSTALLED" | sed 's/-.*//;s/\.dev.*//')
+LATEST_CLEAN=$(echo "$LATEST" | sed 's/-.*//;s/\.dev.*//')
+
+if [ "$INSTALLED_CLEAN" = "$LATEST_CLEAN" ]; then
+  output=""
+elif [ "$(printf '%s\n%s\n' "$INSTALLED_CLEAN" "$LATEST_CLEAN" | sort -V | tail -1)" = "$LATEST_CLEAN" ]; then
+  output="UPGRADE_AVAILABLE $INSTALLED $LATEST"
+else
+  # Installed is ahead of "latest" (dev version)
+  output=""
+fi
+
+# Cache the result (even if empty — means "no upgrade", valid cache state)
+echo "$output" > "$CACHE_FILE"
+[ -n "$output" ] && echo "$output"
+exit 0

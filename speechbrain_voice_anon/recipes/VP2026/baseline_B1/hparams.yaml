@@ -1,0 +1,25 @@
+# B1 (McAdams) hyperparameters — VP2026 baseline.
+# Re-implemented from the VP2024 Eval Plan PDF (https://inria.hal.science/hal-04531444v1/).
+# Not a port of the VP2024 GPLv3 code.
+
+baseline: B1
+seed: 42
+
+# McAdams transformation
+alpha: 0.8                # McAdams coefficient. 0.8 = standard. Lower = stronger anonymization.
+lpc_order: 20             # LPC analysis order for 16 kHz speech.
+frame_length_ms: 25
+hop_length_ms: 10
+
+# Determinism
+deterministic: true       # Required for /vp-repro-check PASS
+
+# Eval
+eval_set: dev             # 'dev' or 'test' (test requires explicit official_test=True)
+sample_rate: 16000
+
+# Splits — explicit paths required for /vp-repro-check PASS
+data:
+  trial_list: PROVIDE_AT_RUNTIME    # Will fail repro-check if not overridden
+  enrollment: PROVIDE_AT_RUNTIME
+  evaluation_audio: PROVIDE_AT_RUNTIME

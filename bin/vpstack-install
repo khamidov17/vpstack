@@ -1,0 +1,213 @@
+#!/usr/bin/env node
+// vpstack-install — detects which AI coding agent is on this machine and installs
+// vpstack skills + MCP server config to the right location.
+//
+// Targets:
+//   - Claude Code:    ~/.claude/skills/vpstack/        (global) or  ./.claude/skills/vpstack/  (local)
+//   - Codex:          ~/.codex/skills/vpstack/
+//   - Cursor:         project-level .cursorrules entry pointing at vpstack-mcp
+//   - Cline:          .clinerules in project root
+//
+// MCP server config is emitted in each frontend's expected format.
+//
+// Usage:
+//   npx vpstack@latest                  # interactive: detects, asks, installs
+//   npx vpstack@latest --global         # install to ~/...
+//   npx vpstack@latest --local          # install to ./...
+//   npx vpstack@latest --target claude  # only Claude Code
+//   npx vpstack@latest --upgrade        # re-run install over existing
+//   npx vpstack@latest --uninstall      # remove all installed copies
+
+'use strict';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const readline = require('readline');
+
+const PKG_DIR = path.resolve(__dirname, '..');
+const SKILLS_DIR = path.join(PKG_DIR, 'skills');
+const VERSION = fs.readFileSync(path.join(PKG_DIR, 'VERSION'), 'utf8').trim();
+
+const args = process.argv.slice(2);
+const flags = {
+  global: args.includes('--global'),
+  local: args.includes('--local'),
+  upgrade: args.includes('--upgrade'),
+  uninstall: args.includes('--uninstall'),
+  yes: args.includes('--yes') || args.includes('-y'),
+  target: null,
+};
+const targetIdx = args.indexOf('--target');
+if (targetIdx !== -1 && args[targetIdx + 1]) flags.target = args[targetIdx + 1];
+
+function log(msg) { console.log(`[vpstack-install] ${msg}`); }
+function warn(msg) { console.error(`[vpstack-install] WARN: ${msg}`); }
+
+function detectFrontends() {
+  const found = [];
+  const home = os.homedir();
+  if (fs.existsSync(path.join(home, '.claude'))) found.push('claude-code');
+  if (fs.existsSync(path.join(home, '.codex'))) found.push('codex');
+  if (fs.existsSync(path.join(process.cwd(), '.cursorrules')) ||
+      fs.existsSync(path.join(home, '.cursor'))) found.push('cursor');
+  if (fs.existsSync(path.join(process.cwd(), '.clinerules'))) found.push('cline');
+  return found;
+}
+
+function copyDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDir(s, d);
+    } else {
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+
+function installToClaudeCode(scope) {
+  const base = scope === 'global'
+    ? path.join(os.homedir(), '.claude', 'skills', 'vpstack')
+    : path.join(process.cwd(), '.claude', 'skills', 'vpstack');
+  log(`Installing to ${base}`);
+  if (fs.existsSync(base) && !flags.upgrade) {
+    warn(`${base} already exists. Use --upgrade to overwrite.`);
+    return;
+  }
+  fs.rmSync(base, { recursive: true, force: true });
+  fs.mkdirSync(base, { recursive: true });
+  copyDir(SKILLS_DIR, base);
+
+  // B8 fix: install bin/ scripts INSIDE the skills tree at base/bin/, NOT at
+  // ~/.claude/bin/. Skills reference them via the absolute path
+  // ~/.claude/skills/vpstack/bin/... (with project-local fallback). This avoids
+  // (a) polluting ~/.claude/bin with vpstack-only scripts, and (b) requiring
+  // ~/.claude/bin to be on the user's PATH, which it usually isn't.
+  const binDest = path.join(base, 'bin');
+  fs.mkdirSync(binDest, { recursive: true });
+  const binFiles = fs.readdirSync(path.join(PKG_DIR, 'bin'));
+  for (const f of binFiles) {
+    fs.copyFileSync(path.join(PKG_DIR, 'bin', f), path.join(binDest, f));
+    fs.chmodSync(path.join(binDest, f), 0o755);
+  }
+
+  // B9 fix: actual count, not hardcoded "6".
+  const skillCount = fs.readdirSync(base, { withFileTypes: true })
+    .filter(e => e.isDirectory()).length;
+  log(`Installed ${skillCount} skills + ${binFiles.length} bin scripts to ${base}.`);
+}
+
+function uninstallClaudeCode() {
+  for (const scope of ['global', 'local']) {
+    const base = scope === 'global'
+      ? path.join(os.homedir(), '.claude', 'skills', 'vpstack')
+      : path.join(process.cwd(), '.claude', 'skills', 'vpstack');
+    if (fs.existsSync(base)) {
+      fs.rmSync(base, { recursive: true, force: true });
+      log(`Removed ${base}`);
+    }
+    // Also clean up the legacy ~/.claude/bin/vpstack-* footprint from pre-B8 installs
+    const legacyBin = scope === 'global'
+      ? path.join(os.homedir(), '.claude', 'bin')
+      : path.join(process.cwd(), '.claude', 'bin');
+    if (fs.existsSync(legacyBin)) {
+      for (const f of fs.readdirSync(legacyBin)) {
+        if (f.startsWith('vpstack-')) {
+          fs.rmSync(path.join(legacyBin, f), { force: true });
+        }
+      }
+    }
+  }
+}
+
+function emitMcpConfig() {
+  // Emit a config snippet the user can paste into their MCP client config.
+  const config = {
+    mcpServers: {
+      vpstack: {
+        command: 'vpstack-mcp',
+        args: [],
+        env: {},
+      },
+    },
+  };
+  log('MCP server config (paste into Claude Desktop / Cursor MCP config):');
+  console.log(JSON.stringify(config, null, 2));
+  log('Install vpstack-mcp via:  pip install vpstack-mcp');
+}
+
+function ask(q) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(q, (ans) => { rl.close(); resolve(ans.trim()); });
+  });
+}
+
+async function promptTelemetry() {
+  console.log('');
+  console.log('vpstack telemetry — your choice:');
+  console.log('  A) community  (recommended) — anonymous device ID + skill name + duration');
+  console.log('  B) anonymous              — just a counter, no device ID');
+  console.log('  C) off                    — zero network calls');
+  console.log('');
+  console.log('vpstack NEVER sends: code, file paths, hypothesis text, eval numbers, repo names.');
+  console.log('Change anytime: vpstack-config set telemetry off');
+  console.log('');
+  const ans = (await ask('Pick A/B/C: ')).toLowerCase();
+  let mode = 'anonymous';
+  if (ans === 'a' || ans === 'community') mode = 'community';
+  else if (ans === 'b' || ans === 'anonymous') mode = 'anonymous';
+  else if (ans === 'c' || ans === 'off') mode = 'off';
+  // Persist via vpstack-config
+  const { spawnSync } = require('child_process');
+  spawnSync(path.join(PKG_DIR, 'bin', 'vpstack-config'), ['set', 'telemetry', mode], { stdio: 'inherit' });
+  log(`telemetry mode set to: ${mode}`);
+}
+
+async function main() {
+  log(`vpstack v${VERSION}`);
+
+  if (flags.uninstall) {
+    uninstallClaudeCode();
+    log('Uninstall complete.');
+    return;
+  }
+
+  const frontends = flags.target ? [flags.target] : detectFrontends();
+  if (frontends.length === 0) {
+    warn('No supported AI coding agent detected. Looking for: ~/.claude, ~/.codex, .cursorrules, .clinerules');
+    log('You can still install the MCP server (pip install vpstack-mcp) and the recipe (pip install speechbrain-voice-anon).');
+    process.exit(1);
+  }
+
+  log(`Detected: ${frontends.join(', ')}`);
+
+  const scope = flags.local ? 'local' : 'global';
+
+  for (const f of frontends) {
+    if (f === 'claude-code') installToClaudeCode(scope);
+    else if (f === 'codex') {
+      log('Codex install not yet implemented — coming in 0.2.0. For now, use the MCP server.');
+    } else if (f === 'cursor' || f === 'cline') {
+      log(`${f} integration is via MCP server. See output below.`);
+    }
+  }
+
+  emitMcpConfig();
+
+  // Telemetry prompt — only on first install (no existing config)
+  const cfgPath = path.join(os.homedir(), '.vpstack', 'config.json');
+  if (!fs.existsSync(cfgPath) && !flags.yes) {
+    await promptTelemetry();
+  }
+
+  log('Done. Try `/vp-baseline-compare` in a voice-anonymization project.');
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
