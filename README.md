@@ -270,12 +270,32 @@ In an unrelated project (Rails, Go CLI, NLP repo with no voice signals), none of
 
 | Component | Purpose |
 |---|---|
-| **7 Claude Code skills** | `/vp-hypothesis`, `/vp-spike`, `/vp-baseline-compare`, `/vp-attack`, `/vp-eval`, `/vp-repro-check`, `/vp-writeup` |
+| **15 Claude Code skills** | Full research lifecycle. See "Skills reference" below. |
 | **MCP server** | 8 tools for any MCP-aware agent: `vp_run_baseline`, `vp_run_eval`, `vp_run_attacker`, `vp_check_submission`, `vp_check_reproducibility`, `vp_get_component_info`, `vp_search_experiments`, `vp_log_experiment` |
 | **SpeechBrain recipe** | Reference implementations of B1 (McAdams — implemented), B2 (HuBERT + ECAPA + HiFi-GAN — stub), stronger starters, and the ASV attacker recipe |
 | **Auto-activation** | Detects voice-anonymization projects via heuristic + first-run prompt + explicit override |
 | **Auto-update** | Preamble version check, user always confirms upgrade |
 | **Opt-in telemetry** | Three modes (off / anonymous / community); never sends code, paths, or research data |
+
+### The 15 skills, organized by lifecycle phase
+
+| Phase | Skill | When to use |
+|---|---|---|
+| **Direction** | `/vp-talk` | Open question, threat model, contribution claim — before any hypothesis |
+| **Plan** | `/vp-hypothesis` | Formalize ONE experiment (after direction is set) |
+| | `/vp-spike` | Run 1–3 quick variants to test a hypothesis |
+| **Review** | `/vp-plan-design-review` | Recipe / attacker / eval architecture review BEFORE coding |
+| | `/vp-plan-eng-review` | 18 VP-specific quality gates layered on gstack's eng review |
+| **Build** | `/vp-implement` | Orchestrated implementation with pre/during/post gates |
+| **Measure** | `/vp-baseline-compare` | Daily check: B1 + B2 + your system delta table |
+| | `/vp-attack` | Run ASV attacker (the privacy question) |
+| | `/vp-eval` | Full VP2026 submission scorecard |
+| | `/vp-repro-check` | Verify seeds, splits, checkpoints, hparams |
+| **Validate** | `/vp-qa` | Multi-tier QA: repro + attacker smoke + submission format + tests |
+| | `/vp-investigate` | Domain-aware debugging (EER weird, WER tanked, repro fails) |
+| **Ship** | `/vp-ship` | VP-aware ship with gates: tests, repro, attacker smoke, submission format |
+| **Document** | `/vp-writeup` | Internal experiment report (NO citations, NO paper prose) |
+| **Lifecycle** | `/vp-autoplan` | Sequence the above end-to-end with check-in gates |
 
 ---
 

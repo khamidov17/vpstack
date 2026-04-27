@@ -44,6 +44,15 @@ ERROR_CODES = frozenset({
     # Added for /vp-attack (vp_run_attacker tool)
     "ATTACKER_TRAINING_FAILED",   # ECAPA loss diverged / NaN'd during semi-informed retrain
     "ATTACKER_DATA_MISMATCH",     # trial list / enrollment layout mismatch
+    # Added for /vp-implement (orchestrated implementation gates)
+    "LICENSE_VIOLATION",          # diff introduces VP2024 GPLv3 reference or bundled weights
+    "REPRO_CHECK_FAIL",           # vp_check_reproducibility returned FAIL
+    "TESTS_REGRESSED",            # tests that were green before are now failing
+    "CONTRACT_VIOLATION",         # recipe missing CLI args / JSON output, or MCP tool raises
+    "PLACEHOLDER_HPARAMS",        # YAML has TODO / FILL_ME / null / "" values
+    "BASELINE_TESTS_RED",         # tests already failing before /vp-implement started
+    "TARGET_OUT_OF_SCOPE",        # implementation path not under recipes/ or mcp-server/tools/
+    "RUFF_DIRTY",                 # ruff check found issues --fix didn't resolve
 })
 
 

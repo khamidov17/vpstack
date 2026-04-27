@@ -4,6 +4,24 @@ All notable changes to vpstack are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added (full domain command set, 2026-04-28)
+- **`/vp-talk`** — voice-anonymization research-direction office hours. 8 forcing questions covering open question, threat model, contribution claim, baseline selection, eval scope, failure modes, scope discipline, and (clinical-only) HIPAA-grade threat surface. Writes locked research-plan docs to `~/.vpstack/projects/{slug}/research-plans/`. Includes domain knowledge for OHNN (Orthogonal Householder Neural Network, Miao et al. 2023, arXiv:2305.18823) and three architectural families (classical / selection / transformation).
+- **`/vp-plan-design-review`** — review recipe / attacker / eval architecture BEFORE coding. Validates recipe interface contract, attacker condition coverage, the 5 reproducibility checks, eval-set safety (no test-split leakage), and license posture. Distinct from gstack's visual-UI design review.
+- **`/vp-plan-eng-review`** — 18 VP-specific engineering gates layered on top of gstack `/plan-eng-review`. P0 gates: GPLv3 isolation, runtime model fetch, test-split blocking, fixture audit, telemetry allowlist, MCP `ToolResult` contract, VP2026 submission format, atomic state writes, repro-check, attacker-training determinism. P1: three attacker conditions, F-F/M-M/Mixed gender, recipe interface, 16kHz PCM, model dependency declarations, activation silence. P2: Track 2 multilingual, headless mode.
+- **`/vp-implement`** — orchestrated implementation with pre/during/post gates. Reads latest hypothesis, enforces recipe-shape contract from CLAUDE.md, blocks placeholder hparams, auto-runs `/vp-repro-check`, verifies the 7 critical CG tests stay green, logs to experiment tracker for `/vp-writeup`. 14-step workflow with 9 explicit BLOCKED states (LICENSE_VIOLATION, REPRO_CHECK_FAIL, TESTS_REGRESSED, CONTRACT_VIOLATION, PLACEHOLDER_HPARAMS, BASELINE_TESTS_RED, TARGET_OUT_OF_SCOPE, RUFF_DIRTY, MCP_UNREACHABLE).
+- **`/vp-qa`** — multi-tier QA orchestration: repro-check + lazy-informed attacker smoke + submission format + project pytest. Three tiers (Quick ~15min / Standard ~1h / Pre-submission ~12h). Computes 0–100 QA score across tests/repro/privacy/utility/submission categories.
+- **`/vp-attack`** — already shipped; documented in CHANGELOG above.
+- **`/vp-investigate`** — domain-aware debugging with VP2026 priors. Decision tree for the most-common failure modes: EER > 50% (polarity flip), EER ≈ 50% (broken attacker), EER too low (anonymization no-op), reproducibility drift (CUDA non-determinism), WER NaN (audio format mismatch), incoherent attacker output, submission-format errors. Falls back to gstack `/investigate` for non-domain causes.
+- **`/vp-ship`** — voice-anonymization-aware ship workflow. gstack `/ship` shape (base-branch detection, version bump, atomic commit, push, optional PR) PLUS VP-specific gates: pytest -m "not gpu", `/vp-repro-check` PASS if recipe touched, submission format if eval pipeline touched, optional 10-min lazy_informed attacker smoke if anonymizer code changed. Blocks ship if any P0 gate fails.
+- **`/vp-autoplan`** — full lifecycle sequencer: `/vp-talk` → `/vp-hypothesis` → `/vp-plan-design-review` → `/vp-plan-eng-review` → `/vp-implement` → `/vp-qa` → `/vp-ship`. Four scope modes (Greenfield / Mid-cycle / Implementation-done / Pre-submission). Check-in gates between phases — autoplan never silently skips a skill's prompts.
+
+### Added (error codes for new skills)
+- `LICENSE_VIOLATION`, `REPRO_CHECK_FAIL`, `TESTS_REGRESSED`, `CONTRACT_VIOLATION`, `PLACEHOLDER_HPARAMS`, `BASELINE_TESTS_RED`, `TARGET_OUT_OF_SCOPE`, `RUFF_DIRTY` — added to `ERROR_CODES` allowlist for `/vp-implement` BLOCKED states.
+
+### Skill count
+- **v0.1.0-dev (initial):** 7 skills + 7 MCP tools
+- **v0.1.0-dev (post-2026-04-28):** **15 skills + 8 MCP tools** — full lifecycle coverage with voice-anon domain context at every phase.
+
 ### Fixed (correctness audit, 2026-04-28)
 - **B1 frame length: 25 → 20 ms** to match the canonical Patino VP2020 reference (`anonymise_dir_mcadams.py`). Earlier value was wrong; B1 numbers from the prior version would not match published baselines.
 - **B1 pole mask: exclude ±π real-axis poles.** Previously a pole at `angle = π` (negative real) would get transformed to `π^0.8 ≈ 2.499`, lifting it off the real axis with no conjugate partner — geometrically wrong. Canonical Patino uses `np.iscomplex(roots)`. Audit-flagged and corrected.

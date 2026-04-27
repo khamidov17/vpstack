@@ -1,0 +1,265 @@
+---
+name: vp-plan-eng-review
+version: 0.1.0-dev
+description: |
+  Voice-privacy engineering review. Layers on top of the generic /plan-eng-review with 18
+  VP-specific quality gates: GPLv3 isolation, runtime model fetch, held-out test split safety,
+  the 5 reproducibility checks, three attacker conditions, VP2026 submission format (CSV +
+  Mixed gender + rank/zip), recipe interface contract, 16 kHz PCM, MCP ToolResult contract,
+  telemetry allowlist, atomic state writes. Use when the user asks to "review my voice-anon
+  plan", "vp eng review", or before /vp-ship on a research-correctness change. (vpstack)
+  Voice triggers: "vp eng review", "voice anon plan review", "review the privacy plan", "plan review".
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - AskUserQuestion
+  - Write
+---
+
+# /vp-plan-eng-review
+
+Voice-privacy engineering review. The generic `/plan-eng-review` catches architecture, tests, and perf issues. This adds the things that only matter in VoicePrivacy: GPLv3 contamination, attacker-training determinism, the official VP2026 submission format, the 5 reproducibility checks, and the privacy threat model. Both reviews run; this one fires after the generic one finishes.
+
+## Preamble (run first)
+
+```bash
+eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
+
+case "$ACTIVATION" in
+  NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
+  DETECTED_FIRST_RUN) ;;
+  ENABLED_EXPLICIT|DETECTED_CONFIRMED) ;;
+esac
+
+if [ -n "$UPGRADE_AVAILABLE" ]; then
+  echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
+fi
+
+_TEL_START=$(date +%s)
+_BRANCH=$(git branch --show-current 2>/dev/null || echo unknown)
+echo "BRANCH: $_BRANCH"
+```
+
+## First-run gate
+
+Same as `vp-baseline-compare` (Yes / No / Ask later).
+
+## Run the generic eng review first
+
+This skill **layers on top of** `/plan-eng-review`, does not replace it. Before VP gates, run the generic review:
+
+1. Read `~/.claude/skills/gstack/plan-eng-review/SKILL.md` and execute "Plan Review Mode" through "Completion summary". Skip the generic preamble (already handled) and generic telemetry tail (we emit our own).
+2. Capture the generic review's findings count for the joint Completion Summary.
+
+If the generic review surfaces a P0 the user defers, **stop**. VP gates against a plan with open P0 architecture issues are downstream concerns.
+
+## VP-specific gates
+
+Run the 18 gates below in order. Each gate has three states:
+- **PASS** — clean evidence: say so in one line, move on
+- **FAIL** — concrete issue: fire AskUserQuestion
+- **UNCERTAIN** — signal mixed: fire AskUserQuestion to clarify
+
+For every FAIL or UNCERTAIN, follow the gstack AskUserQuestion format: re-ground (project + branch + plan), simplify (smart-16-year-old explanation), recommend (with `Completeness: X/10`), options (lettered with effort `(human: ~X / CC: ~Y)`).
+
+**Sequencing:** Gates 1–10 are P0 (blocking). Gates 11–16 are P1 (should-fix; ship can override). Gates 17–18 are P2 (nice-to-have). Run all of them; only fire questions for fails. Clean gates pass silently in groups.
+
+---
+
+### Gate 1: VP2024 GPLv3 isolation [P0 — license blocker]
+
+**What it checks:** No new code in the diff `import`s, copies, or paraphrases identifiable structure from the `Voice-Privacy-Challenge-2024` GitHub repo. CLAUDE.md rule #1, LICENSING.md blocker #1.
+
+**How to verify:**
+- Grep diff for telltale identifiers: `from voiceprivacy`, `import vpc_2024`, `mcadams_anonymization`, `B2_HiFi`, paths under `local/featex/`, `evaluation/privacy/asv/`.
+- Check for new files containing `Copyright … VoicePrivacy Challenge` or `GNU General Public License`.
+- For B2/attacker stubs being filled in: confirm the docstring or commit message cites the **VP2024 Eval Plan PDF** (hal-04531444v1) or VP2026 plan, NOT the GitHub repo.
+
+**Strong fix:** Re-implement from the published Eval Plan PDF. McAdams is ~30 lines of LPC pole-angle math. B2 is HuBERT layer 7-9 features → ECAPA target embedding → HiFi-GAN — every component is independently Apache 2.0 / MIT.
+
+**Red flag:** Any new file references `Voice-Privacy-Challenge/Voice-Privacy-Challenge-2024` as the source.
+
+### Gate 2: Pretrained-weight runtime fetch [P0]
+
+**What it checks:** No new `.pt`, `.ckpt`, `.bin`, `.safetensors`, `.pth`, or `.onnx` staged. All model fetches via `huggingface_hub.snapshot_download()` or SpeechBrain's `Pretrained.from_hparams()`. CLAUDE.md rule #2.
+
+**How to verify:**
+- `git diff --stat | grep -E '\.(pt|ckpt|bin|safetensors|pth|onnx)$'` — must be empty.
+- For new model dependencies: search diff for `snapshot_download(`, `Pretrained.from_hparams(`, `hf_hub_download(`. Reject `urllib.request.urlretrieve` to `.pt` URLs.
+- Confirm savedir is `~/.vpstack/cache/`, not the repo.
+
+**Strong fix:** Lazy fetch in recipe `__main__`, savedir under `~/.vpstack/cache/{model_id}`, hash-pinned via HF revision SHA in hparams.
+
+### Gate 3: Held-out test split blocking [P0 — research-correctness blocker]
+
+**What it checks:** If the change touches eval / recipes / `vp-eval` / `vp-attack`, the held-out **test** split is gated behind explicit `--official` flag. Dev-only is the default.
+
+**How to verify:**
+- Grep diff for `eval_set` / `split` parameters. Any code path loading `test/` audio must check for explicit official-mode flag and emit `EVAL_BLOCKED_TEST_SPLIT` otherwise.
+- Recipe `--data_path` defaults: confirm dev split is the default in hparams.
+
+**Strong fix:** Default to dev. Test access requires `--official` AND prints a banner. Log access to `~/.vpstack/projects/{slug}/test-split-access.jsonl`.
+
+### Gate 4: Audit fixtures (no VoxCeleb / IEMOCAP / VP2026 trial audio) [P0 — license]
+
+**What it checks:** New CI fixtures under `tests/fixtures/` are LibriSpeech/LibriTTS-derived (CC-BY 4.0) only. CLAUDE.md rule #3.
+
+**How to verify:** `git diff --stat tests/fixtures/`. For new audio, check filenames against LibriSpeech speaker IDs (numeric like `1089-134686-0000`). Reject filenames containing `vox`, `iemocap`, `Ses01`, `voxceleb`.
+
+### Gate 5: Telemetry payload allowlist (CG3/CG4) [P0 — privacy]
+
+**What it checks:** If the change adds telemetry keys, both `bin/vpstack-telemetry-log` AND `tests/telemetry/test_payload_sanitization.py::test_payload_keys_are_strict_allowlist` are updated together. CLAUDE.md rule #4.
+
+**How to verify:**
+- Diff `bin/vpstack-telemetry-log` and `tests/telemetry/test_payload_sanitization.py` together — if one moved, both must move.
+- For each new key, confirm not in forbidden list (file paths, code, hypothesis text, eval numbers, repo names, hparams, user prompts, error message bodies).
+
+**Red flag:** `vpstack-telemetry-log` grew a key but the sanitization test didn't change. CG4 violation in waiting.
+
+### Gate 6: MCP `ToolResult` contract + ERROR_CODES allowlist [P0 — interface]
+
+**What it checks:** New MCP tools return `ok()` / `err(code, ...)` from `errors.py`. Every error code is in `ERROR_CODES`. No raw exceptions escape. CLAUDE.md rule #5.
+
+**How to verify:**
+- For new files in `mcp-server/vpstack_mcp/tools/`, confirm `from vpstack_mcp.errors import ToolResult, ok, err` and that the top-level handler is wrapped in `try / except`.
+- Grep for `raise ` inside tool handlers — any uncaught raise is a violation.
+- For each `err("FOO", ...)`, check `FOO ∈ ERROR_CODES`.
+
+### Gate 7: VP2026 submission format (post-2026-04-28 audit) [P0 — submission]
+
+**What it checks:** Any change touching submission generation produces CSVs under `exp/` (NOT JSON, NOT a `linkability.json`), with column set `{dataset, split, gender, enrollment, trial, EER}`, and reports F-F + M-M + **Mixed** gender per VP2026 plan §7.1.
+
+**How to verify:**
+- Grep for `linkability.json`, `submission.json`, `.json` writes in submission code. The pre-audit invented format must be gone.
+- Confirm CSV writers use the 6-column header. Confirm `Mixed` value appears.
+- Layout includes `exp/asr/results*.csv`, `exp/ser/results*.csv`, `exp/asv_ssl/results*.csv`, `exp/asv_anon*/...`, `exp/results_summary/track1/result_for_submission*.zip`.
+
+### Gate 8: Atomic state writes [P0 — durability]
+
+**What it checks:** Any new code writing to `~/.vpstack/projects/{slug}/` uses write-tmp → fsync → rename → fsync-parent. CLAUDE.md rule #7. CG7.
+
+**How to verify:** Grep new writers for `os.fsync`, `os.replace`. Compare against `_atomic_write_json` in `mcp-server/vpstack_mcp/tools/log_experiment.py`. Reject naive `json.dump(data, open(path, "w"))`.
+
+### Gate 9: 5 reproducibility checks [P0 — research-correctness]
+
+**What it checks:** Any new recipe / hparams config satisfies `vp_check_reproducibility`: pinned int seed, explicit splits, declared checkpoints + `checkpoints.lock`, no placeholder hparams, deterministic mode OR n_seeds ≥ 3.
+
+**How to verify:** Run `vp_check_reproducibility` on the new YAML. Search diff for `seed: auto`, `splits: auto`, `TODO`, `FILL_ME`, `null` in hparams.
+
+### Gate 10: Attacker-training determinism (CUDA non-determinism) [P0 if attacker code touched]
+
+**What it checks:** If attacker training (semi-informed ECAPA retrain) is modified, the run uses N≥3 seeds OR enables `torch.use_deterministic_algorithms(True)`. DESIGN.md "Reproducibility Test Tolerance Note".
+
+**How to verify:**
+- Grep for `torch.use_deterministic_algorithms`, `torch.backends.cudnn.deterministic`, `worker_init_fn`, `generator=torch.Generator().manual_seed(seed)` on every `DataLoader`.
+- Look for `dropout` calls inside `model.eval()` blocks.
+- Look for `torch.cuda.amp.autocast` without fixed seed across replicas.
+
+**Red flag:** New attacker code claims "EER improved 0.4%" off a single seed and no determinism flags. That's noise.
+
+### Gate 11: Three attacker conditions [P1 — argument completeness]
+
+**What it checks:** If the plan claims a privacy improvement, evaluation runs all three official ASV attackers at least once: **ignorant** (sanity floor), **lazy_informed** (weak), **semi_informed** (the official ranking attacker).
+
+**How to verify:** Read the experiment plan / writeup. Grep for `ignorant`, `lazy_informed`, `semi_informed`. Anything fewer than three weakens rebuttal-defense.
+
+**Red flag:** Privacy claim rests on `ignorant` only — anyone informed will ask why semi-informed is missing.
+
+### Gate 12: F-F + M-M + Mixed gender (VP2026-specific) [P1 — submission completeness]
+
+**What it checks:** Eval reports F-F, M-M, AND **Mixed** (F-F + M-M + F-M + M-F union). VP2026 plan §7.1: "the EER is calculated using the Mixed trials."
+
+**How to verify:** Grep eval/report code for the literal `Mixed` and trial-list expansion that unions cross-gender pairs.
+
+### Gate 13: Recipe interface contract (CLI + JSON output) [P1]
+
+**What it checks:** New/modified recipe under `recipes/VP2026/{name}/run.py` honors the canonical contract: CLI args `--data_path` / `--seed` / `--output_format json|human`; on success, **single JSON line** on stdout with `{eer, wer, linkability, config_hash}`; progress to stderr every 30s for runs >15min.
+
+**How to verify:** Diff `argparse` setup. Confirm all four args. Grep for single `print(json.dumps({...}))` at success.
+
+### Gate 14: 16 kHz 16-bit signed PCM WAV [P1 — submission compliance]
+
+**What it checks:** If audio writes are touched, output is **16 kHz, 16-bit signed-integer PCM WAV** per VP2026 plan §7.1.
+
+**How to verify:** Grep `torchaudio.save(`, `soundfile.write(`, `scipy.io.wavfile.write(`. Confirm `sample_rate=16000`, `subtype="PCM_16"` (or `dtype=np.int16` for scipy). Reject any `mp3`, `flac`, `pcm_24`, `float32` writes for submission audio.
+
+### Gate 15: Pretrained model dependency declared [P1]
+
+**What it checks:** New model dependency declared in `LICENSING.md`'s pretrained-model table with license + commercial-use note, AND recipe hparams pin the HF revision SHA.
+
+**How to verify:** Diff `LICENSING.md` against any new `snapshot_download("...")` call. Check hparams for `revision: <sha>` next to `model_id:`.
+
+### Gate 16: Activation silence on non-voice repos (CG5) [P1 — UX]
+
+**What it checks:** If the diff modifies any skill's preamble, `bin/vpstack-detect`, `bin/vpstack-skill-init`, or activation logic, `tests/activation/test_non_voice_silent.py` still passes.
+
+**How to verify:** For preamble changes, confirm `case "$ACTIVATION" in NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;` is the FIRST thing after `eval`. No `echo` before the case statement.
+
+### Gate 17: Track 2 multilingual coverage [P2]
+
+**What it checks:** If the plan claims Track 2 support, evaluation covers French / English / Spanish / German + Track-2 Whisper / emotion2vec wiring per `check_submission.py`'s `TRACK2_REQUIRED_CSVS`.
+
+### Gate 18: Headless mode for CI [P2]
+
+**What it checks:** New skill uses `--headless` flag (or honors `VPSTACK_HEADLESS=1` / `CI=true`) to bypass the first-run AskUserQuestion in non-interactive contexts.
+
+---
+
+## Joint Completion Summary
+
+```
++====================================================================+
+|              VP-PLAN-ENG-REVIEW COMPLETION SUMMARY                  |
++====================================================================+
+| Generic /plan-eng-review                                            |
+|   Architecture: N issues  Code quality: N  Tests: N gaps  Perf: N   |
+|   Status: clean | issues_open                                       |
+|                                                                     |
+| VP-specific gates                                                   |
+|   P0 gates:  X/10 PASS, Y FAIL                                      |
+|   P1 gates:  X/6  PASS, Y FAIL                                      |
+|   P2 gates:  X/2  PASS, Y FAIL                                      |
+|                                                                     |
+| BLOCKERS (P0 fails — must resolve before /vp-ship):                 |
+|   - Gate N: <one-line>                                              |
+| SHOULD-FIX (P1 fails):                                              |
+|   - Gate N: <one-line>                                              |
+| OPTIONAL (P2 fails):                                                |
+|   - Gate N: <one-line>                                              |
++--------------------------------------------------------------------+
+| VERDICT: CLEARED | BLOCKED (N P0 fails)                             |
++====================================================================+
+```
+
+## Review Log
+
+```bash
+~/.claude/skills/gstack/bin/gstack-review-log '{"skill":"vp-plan-eng-review","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","p0_fails":N,"p1_fails":N,"p2_fails":N,"commit":"'"$(git rev-parse --short HEAD)"'"}' 2>/dev/null || true
+```
+
+STATUS = `clean` if 0 P0 fails AND 0 P1 fails. Otherwise `issues_open`.
+
+## Telemetry (run last)
+
+```bash
+_TEL_END=$(date +%s)
+_TEL_DUR=$(( _TEL_END - _TEL_START ))
+~/.claude/skills/vpstack/bin/vpstack-telemetry-log \
+  --skill vp-plan-eng-review \
+  --duration "$_TEL_DUR" \
+  --outcome "$OUTCOME"
+```
+
+## Integration
+
+- **Lifecycle position:** runs AFTER plan finalization, BEFORE implementation. Same slot as generic `/plan-eng-review` but VP-aware.
+- **`/vp-autoplan` integration:** When detected on a voice repo (via `vpstack-detect`), `/vp-autoplan` should call `/vp-plan-eng-review` *instead of* `/plan-eng-review`. The two don't both need to run — this skill calls the generic review internally.
+- **Blocks `/vp-ship`?** Yes for P0 fails. No for P1/P2. Override with `vpstack-config set skip_vp_p0_gates true` (audit-logged + flagged in PR).
+
+## Completion status
+
+- DONE — review complete, verdict CLEARED
+- DONE_WITH_CONCERNS — verdict CLEARED but P1 fails the user opted to defer
+- BLOCKED — verdict BLOCKED with N P0 fails outstanding
