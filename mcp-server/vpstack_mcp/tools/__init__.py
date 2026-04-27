@@ -12,6 +12,9 @@ from vpstack_mcp.tools import (
     get_component_info,
     search_experiments,
     log_experiment,
+    get_context,
+    get_leaderboard,
+    log_learning,
 )
 
 __all__ = [
@@ -23,4 +26,7 @@ __all__ = [
     "get_component_info",
     "search_experiments",
     "log_experiment",
+    "get_context",
+    "get_leaderboard",
+    "log_learning",
 ]

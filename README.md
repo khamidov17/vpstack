@@ -276,20 +276,43 @@ This decision was deliberate: LLM-generated citations hallucinate, and a wrong c
 
 ## MCP tools reference
 
-These are the tools the MCP server (`vpstack-mcp`) exposes to any MCP-aware agent. Skills call them; advanced users can call them directly.
+11 tools exposed by `vpstack-mcp`. Skills call them automatically; call them directly for custom workflows.
+
+### Session + memory tools (call these first)
 
 | Tool | Returns | Cost | What it does |
 |---|---|---|---|
-| `vp_run_baseline(baseline, data_path, seed)` | `{eer, wer, linkability, config_hash}` | B1: ~5min CPU. B2: ~45min GPU. | Run canonical B1 (McAdams) or B2 (neural) baseline. |
-| `vp_run_eval(system_path, eval_set, seed, official_test)` | full scorecard | ~12h GPU for full run | Full VP2026 eval pipeline (currently stubbed pending B2). |
-| `vp_run_attacker(anonymized_path, ..., attacker_condition)` | per-gender EER + Cllr | semi-informed: 4–12h GPU | Run ASV attacker. Three VPC conditions supported. |
-| `vp_check_submission(submission_path)` | `{valid, errors, warnings}` | <1s | Validate submission directory format before upload. |
-| `vp_check_reproducibility(config_path)` | `{status, issues, passed}` | <1s | Check if config is reproducible (5 criteria). |
-| `vp_get_component_info(component_name)` | `{description, tradeoffs, papers, license}` | <1s | Look up tradeoff info for a known component. |
-| `vp_search_experiments(query, limit)` | matching experiments | <1s for 1k experiments | Search logged experiments by substring match. |
-| `vp_log_experiment(exp_id, metrics, config_hash)` | `{logged, path}` | <100ms | Atomically log an experiment (no half-state on kill -9). |
+| `vp_get_context()` | compact session state | <100ms | **Call this first every session.** Best EER, last 5 experiments, active hypothesis, last spike verdict, EER trend, learnings. Replaces 3-5 individual reads. |
+| `vp_get_leaderboard(sort_by, limit)` | ranked experiment table | <100ms | All experiments ranked by EER/WER/linkability. B1/B2 reference rows + beats_B1/beats_B2 flags. Replaces N individual experiment reads. |
+| `vp_log_learning(key, insight, type, confidence)` | `{logged, path}` | <100ms | Persist a research insight to `learnings.jsonl`. Surfaces in future `vp_get_context` calls. |
+| `vp_get_learnings(query, type, component)` | matching learnings | <100ms | Search logged insights. Call before debugging — the failure mode may already be catalogued. |
 
-Every tool returns the same structured contract: `{"ok": bool, "result": Optional[Dict], "error": Optional[{"code": str, "message": str, "hint": str}]}`. Error codes are from a strict allowlist defined in `mcp-server/vpstack_mcp/errors.py`.
+### Experiment tools
+
+| Tool | Returns | Cost | What it does |
+|---|---|---|---|
+| `vp_log_experiment(exp_id, metrics, config_hash, hypothesis, method, tags)` | `{logged, path}` | <100ms | Atomically log an experiment. Pass `hypothesis`/`method`/`tags` so `vp_search_experiments` finds it. |
+| `vp_search_experiments(query, limit)` | matching experiments | <1s | Substring search across id, hypothesis, method, system_name, tags. |
+
+### Eval + validation tools
+
+| Tool | Returns | Cost | What it does |
+|---|---|---|---|
+| `vp_run_baseline(baseline, data_path, seed)` | `{eer, wer, linkability, config_hash}` | B1: ~5min CPU. B2: ~45min GPU. | Run B1 (McAdams) or B2 (neural) baseline. B1 eval stubbed in v0.1 — use B2 for actual numbers. |
+| `vp_run_attacker(anonymized_path, ..., attacker_condition)` | per-gender EER + Cllr | semi-informed: 4–12h GPU | Run the official ASV attacker. semi_informed is the ranking condition. |
+| `vp_run_eval(system_path, eval_set)` | full scorecard | ~12h GPU | (NOT YET IMPLEMENTED — v0.2) Full VP2026 eval pipeline. |
+| `vp_check_submission(submission_path)` | `{valid, errors, warnings}` | <1s | Validate submission format before upload. |
+| `vp_check_reproducibility(config_path)` | `{status, issues, passed}` | <1s | 5-point reproducibility check: seed, splits, checkpoints, hparams, determinism. |
+
+### Knowledge tools
+
+| Tool | Returns | Cost | What it does |
+|---|---|---|---|
+| `vp_get_component_info(component_name)` | `{description, tradeoffs, known_issues, papers, license}` | <1s | Canonical tradeoff info for: hubert, contentvec, wavlm, ecapa-tdnn, hifi-gan, mcadams, plda. Includes `known_issues` — check before debugging. |
+
+Every tool returns `{"ok": bool, "result": ..., "error": {"code": str, "message": str, "hint": str}}`. Error codes from a strict allowlist in `mcp-server/vpstack_mcp/errors.py`.
+
+**Token efficiency note:** A typical research session uses 3000-6000 fewer tokens when starting with `vp_get_context` + `vp_get_leaderboard` instead of re-establishing context manually. The component `known_issues` catalog prevents re-debugging known failure modes.
 
 ---
 

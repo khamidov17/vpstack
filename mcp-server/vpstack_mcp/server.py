@@ -1,6 +1,6 @@
 """vpstack-mcp stdio server.
 
-Exposes 7 VP2026 voice-privacy tools to any MCP-aware AI agent (Claude Code,
+Exposes 11 VP2026 voice-privacy tools to any MCP-aware AI agent (Claude Code,
 Claude Desktop, Codex, Cursor, Cline). Uses stdio transport — local subprocess,
 no port management, no FastAPI process.
 
@@ -36,6 +36,9 @@ from vpstack_mcp.tools import (
     get_component_info,
     search_experiments,
     log_experiment,
+    get_context,
+    get_leaderboard,
+    log_learning,
 )
 
 
@@ -197,6 +200,116 @@ _TOOLS: dict[str, dict[str, Any]] = {
                 "seed": {"type": "integer", "default": 42},
             },
             "required": ["anonymized_path", "enrollment_path", "trial_list", "attacker_condition"],
+        },
+    },
+    "vp_get_context": {
+        "handler": get_context.handle,
+        "description": (
+            "One-call session restore for a voice-privacy research project. "
+            "Returns: best EER experiment so far, last 5 experiments with metrics, "
+            "active hypothesis, last spike verdict, EER trend (improving/declining), "
+            "B1/B2 reference baselines, days to submission deadline (if set), and "
+            "recent research learnings. Replaces 3-5 individual tool calls at session start. "
+            "Call this first at the start of any research session."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "include_learnings": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include recent learnings from learnings.jsonl.",
+                },
+            },
+        },
+    },
+    "vp_get_leaderboard": {
+        "handler": get_leaderboard.handle,
+        "description": (
+            "Rank all logged experiments by a metric (EER, WER, or linkability). "
+            "Returns a sorted comparison table with B1/B2 reference rows and beats_B1/beats_B2 flags. "
+            "Replaces N individual experiment reads with one call. "
+            "Use when the researcher asks 'which was my best run?' or 'am I beating B2?'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["eer", "wer", "linkability"],
+                    "default": "eer",
+                    "description": "EER: higher=better (more private). WER: lower=better (more useful).",
+                },
+                "sort_order": {"type": "string", "enum": ["asc", "desc"]},
+                "limit": {"type": "integer", "default": 50},
+                "include_references": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include B1/B2 reference rows at the top.",
+                },
+            },
+        },
+    },
+    "vp_log_learning": {
+        "handler": log_learning.handle_log,
+        "description": (
+            "Persist a research insight to ~/.vpstack/projects/{slug}/learnings.jsonl. "
+            "Use after a /vp-spike verdict, after debugging a known failure, or when the "
+            "researcher explicitly notes a pattern. Learnings surface in future sessions "
+            "via vp_get_context and /vp-implement pre-flight. "
+            "Example: key='hubert-l6-short-utterances', "
+            "insight='HuBERT layer 6 causes speaker leakage on utterances < 1s on LibriSpeech dev'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Short kebab-case identifier, e.g. 'hubert-layer6-short-utterances'.",
+                },
+                "insight": {
+                    "type": "string",
+                    "description": "1-3 sentences. Be specific: include components, values, and conditions.",
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["pitfall", "pattern", "preference", "architecture", "component", "data"],
+                    "default": "pitfall",
+                },
+                "confidence": {"type": "integer", "default": 8, "description": "1-10. Observed in data=8-9, inferred=4-5."},
+                "source": {
+                    "type": "string",
+                    "enum": ["observed", "user-stated", "inferred", "cross-model"],
+                    "default": "observed",
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Related file paths for staleness detection.",
+                },
+                "component": {
+                    "type": "string",
+                    "description": "Component this relates to, e.g. 'hubert', 'ecapa-tdnn'.",
+                },
+            },
+            "required": ["key", "insight"],
+        },
+    },
+    "vp_get_learnings": {
+        "handler": log_learning.handle_get,
+        "description": (
+            "Return logged research learnings, optionally filtered by query, type, or component. "
+            "Use before /vp-spike or /vp-implement to surface known pitfalls and patterns. "
+            "Returns newest first."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Substring match against key and insight."},
+                "type": {"type": "string", "enum": ["pitfall", "pattern", "preference", "architecture", "component", "data"]},
+                "component": {"type": "string", "description": "Filter to a specific component."},
+                "limit": {"type": "integer", "default": 20},
+            },
         },
     },
 }

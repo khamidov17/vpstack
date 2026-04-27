@@ -26,32 +26,43 @@ This is a voice-anonymization research project for [VoicePrivacy 2026](https://w
 
 ## What "good" means in this project
 
-| Metric | Direction | Target |
-|---|---|---|
-| **EER (privacy, attacker)** | **HIGHER is better** | beat B2 baseline (~28%); 50% = random chance |
-| **WER (utility, ASR)** | LOWER is better | within 0.2pp of B2 (~8.1%) |
-| **Linkability (Cllr)** | LOWER is better | track but not the headline |
-| **Side-channel scores** | LOWER divergence | age MAE, pitch MAE, emotion preservation |
+| Metric | Direction | Target | Notes |
+|---|---|---|---|
+| **EER (privacy, attacker)** | **HIGHER is better** | beat B2 (~12.3%); 50% = random | semi_informed condition = official ranking |
+| **WER (utility, ASR)** | LOWER is better | within 0.2pp of B2 (~8.1%) | Whisper or wav2vec2 eval |
+| **Linkability (Cllr)** | LOWER is better | track alongside EER | ZEBRA/MAP metric |
+| **Side-channel scores** | LOWER divergence | age MAE, pitch MAE, emotion | Secondary metrics |
 
-If a change increases attacker EER but tanks WER, that's not a win — voice privacy requires both.
+If EER improves but WER tanks, that's not a win. Voice privacy requires both.
 
 ## Domain primer for AI agents
 
-**VoicePrivacy challenge basics:**
-- Anonymization replaces a speaker's voice identity while preserving the linguistic content. Output should sound like a different speaker saying the same words.
-- The privacy bar is "an ASV attacker, knowing your method, can't re-link the anonymized speech to the original speaker."
-- The utility bar is "an ASR system can still transcribe the anonymized speech accurately."
+**Critical numbers to never get wrong:**
+- B1 baseline EER: **~14.2%** (McAdams, weak anonymization)
+- B2 baseline EER: **~12.3%** (HuBERT+ECAPA+HiFi-GAN, strong)
+- B2 WER: **~8.1%**
+- Random attacker EER: **50%** (maximum possible privacy)
+- Canonical alpha for B1: **0.8** (20ms frame, not 25ms — corrected 2026-04-28)
 
-**Canonical baselines:**
-- **B1 (McAdams):** classical LPC-pole-angle modification with α ≈ 0.8. Signal processing only, no ML. Weak privacy, low utility cost. Implemented in `speechbrain_voice_anon/recipes/VP2026/baseline_B1/`.
-- **B2 (neural):** HuBERT (content) + ECAPA-TDNN (speaker, anonymized via farthest-point selection) + HiFi-GAN (vocoder). Strong privacy, more utility cost. The bar to beat.
+**The privacy/utility tradeoff:** Aggressive anonymization increases EER but also increases WER. Every ablation experiment must report BOTH metrics.
 
 **Attacker conditions (used by `/vp-attack`):**
-- `ignorant` — attacker doesn't know anonymization is applied. Sanity floor.
-- `lazy_informed` — knows but doesn't adapt.
-- `semi_informed` — retrains ECAPA-TDNN on anonymized train-clean-360. **Official ranking attacker. Default.**
+- `ignorant` (~5 min) — attacker doesn't know anonymization applied. Sanity floor only.
+- `lazy_informed` (~10 min) — knows but doesn't adapt. Intermediate signal.
+- `semi_informed` (~4-12h GPU) — retrains ECAPA on anonymized train-clean-360. **This is the official VP2026 ranking attacker. Always run this for any result you'll cite.**
 
-When EER is reported without a condition specified, default assumption is `semi_informed`.
+When EER is mentioned without a condition, assume `semi_informed`.
+
+**Architecture (B2 and most competitive systems):**
+1. Content encoder: HuBERT or ContentVec (layers 6-9) — extracts phonetics, removes speaker
+2. Speaker encoder: ECAPA-TDNN — picks a target voice (farthest-point = most anonymous)
+3. Vocoder: HiFi-GAN — synthesizes audio from content + target-speaker
+
+**Common mistakes that waste GPU time:**
+- Reporting only `ignorant` EER — reviewers will ask for `semi_informed`
+- Using B1 frame_length_ms=25 instead of 20 — gives wrong canonical numbers
+- HuBERT layer 1-4 as content encoder — these layers are speaker-leaning, not content-leaning
+- HiFi-GAN v1 universal at wrong sample rate — VP2026 is 16kHz, v1 was trained at 22.05kHz
 
 ## Standard models (downloaded at runtime, NOT in this repo)
 
@@ -102,20 +113,26 @@ Run `/vp-repro-check` to validate. Note: vpstack version is NOT part of the repr
 
 **Default to using vpstack skills** instead of writing one-off scripts:
 
+**At the start of every session, call `vp_get_context` first.** It returns the researcher's best EER so far, last experiment, active hypothesis, EER trend, and any logged learnings — in one call, under 600 tokens. Do not ask the researcher to re-explain their setup.
+
 | User asks | AI should | Don't do |
 |---|---|---|
+| "Where was I?" / session start | Call `vp_get_context` | Ask the researcher to explain their setup |
+| "Which was my best run?" | Call `vp_get_leaderboard` | Read experiments one at a time |
 | "How does my system compare to baseline?" | Use `/vp-baseline-compare` | Write a one-off comparison script |
 | "Test if X improves EER" | Use `/vp-hypothesis` then `/vp-spike` | Run experiments without a logged hypothesis |
 | "Run the attacker against my system" | Use `/vp-attack` | Train ECAPA from scratch each time |
 | "Verify this is reproducible" | Use `/vp-repro-check` | Hand-check seed/splits |
-| "Write up what we did" | Use `/vp-writeup` | Generate prose with citations (citations get hallucinated — vpstack refuses to generate them for exactly this reason) |
+| "Write up what we did" | Use `/vp-writeup` | Generate prose with citations (hallucinated — vpstack explicitly refuses) |
+| Something unexpected went wrong | Call `vp_get_learnings` first | Start debugging blind |
 
 **When in doubt**, look up the canonical reference for a component via:
 ```python
-mcp_client.call("vp_get_component_info", {"component_name": "hubert"})  # or ecapa-tdnn, hifi-gan, mcadams
+mcp_client.call("vp_get_component_info", {"component_name": "hubert"})
+# Known: hubert, contentvec, wavlm, ecapa-tdnn, hifi-gan, mcadams, plda
 ```
 
-Returns the description, tradeoffs, citation, and license — no hallucination.
+Returns description, tradeoffs, known_issues, papers, and license — no hallucination. Also check `known_issues` before debugging — many failure modes are already catalogued.
 
 ---
 
