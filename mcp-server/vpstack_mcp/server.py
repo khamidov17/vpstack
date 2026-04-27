@@ -30,6 +30,7 @@ from vpstack_mcp import __version__
 from vpstack_mcp.tools import (
     run_baseline,
     run_eval,
+    run_attacker,
     check_submission,
     check_reproducibility,
     get_component_info,
@@ -149,6 +150,34 @@ _TOOLS: dict[str, dict[str, Any]] = {
                 "config_hash": {"type": "string"},
             },
             "required": ["exp_id", "metrics", "config_hash"],
+        },
+    },
+    "vp_run_attacker": {
+        "handler": run_attacker.handle,
+        "description": (
+            "Run an ASV attacker against an anonymized output to measure how well anonymization "
+            "hides the speaker. Three official VP2024/2026 conditions: ignorant (pretrained ECAPA, "
+            "fast diagnostic), lazy_informed (pretrained ECAPA + anonymized enrollment, ~10min), "
+            "semi_informed (ECAPA retrained on anonymized train-clean-360, the ranking attacker, "
+            "~4-12h on a single GPU). Returns per-gender EER (the official privacy metric) plus "
+            "linkability (ZEBRA Cllr). Use semi_informed as default unless the user explicitly "
+            "asks for a fast diagnostic."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "anonymized_path": {"type": "string"},
+                "enrollment_path": {"type": "string"},
+                "trial_list": {"type": "string"},
+                "attacker_condition": {
+                    "type": "string",
+                    "enum": ["ignorant", "lazy_informed", "semi_informed"],
+                },
+                "attacker_arch": {"type": "string", "enum": ["ecapa_tdnn"], "default": "ecapa_tdnn"},
+                "anonymizer_config": {"type": "string"},
+                "seed": {"type": "integer", "default": 42},
+            },
+            "required": ["anonymized_path", "enrollment_path", "trial_list", "attacker_condition"],
         },
     },
 }

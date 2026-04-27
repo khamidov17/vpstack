@@ -53,7 +53,14 @@ ACTIVATION=$(echo "$DETECT_OUT" | head -1)
 ACTIVATION_REASON=$(echo "$DETECT_OUT" | grep '^REASON: ' | sed 's/^REASON: //' || echo "")
 
 # Headless override: never prompt
+# F19 fix: also emit a stderr diagnostic so a user running under tmux / script /
+# any harness that drops the TTY can SEE that vpstack went silent on their voice
+# project (rather than silently doing nothing and looking broken).
 if [ "$HEADLESS" -eq 1 ] && [ "$ACTIVATION" = "DETECTED_FIRST_RUN" ]; then
+  >&2 echo "vpstack: detected voice project but running headless (no TTY / VPSTACK_HEADLESS=1 / CI=true)"
+  >&2 echo "vpstack: skipping first-run prompt. Pre-set the activation marker manually:"
+  >&2 echo "  mkdir -p .vpstack && touch .vpstack/enabled    # enable in this project"
+  >&2 echo "  mkdir -p .vpstack && touch .vpstack/disabled   # silence in this project"
   ACTIVATION="DISABLED_EXPLICIT"
   ACTIVATION_REASON="headless mode — first-run prompt suppressed"
 fi

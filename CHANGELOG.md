@@ -4,6 +4,27 @@ All notable changes to vpstack are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added (post-initial-commit pass)
+- **`/vp-attack` skill + `vp_run_attacker` MCP tool** — VPC-conformant ASV attacker against anonymized output. Supports the three official conditions (ignorant / lazy_informed / semi_informed). Per-gender EER + linkability (ZEBRA Cllr). Recipe is stubbed; spec is locked. The wedge feature that makes vpstack research infrastructure, not just a SpeechBrain wrapper.
+- **`.vpstack/ask-later` marker** with 60-min validity — fixes the multi-skill-session re-prompt loop (F32 from QA).
+- **HEADLESS coercion stderr diagnostic** — users in tmux/CI now see WHY vpstack went silent instead of staring at a blank session (F19 from QA).
+- **Reframe to voice-privacy research infrastructure** (CEO review) — drops the VP2026-only ceiling. Multi-challenge support framing for VP2024+VP2026. README opens with "if you don't work on voice anonymization, this isn't for you" so the audience self-selects in 1 line.
+- **GitHub starter issues** for B2, eval pipeline, telemetry endpoint deployment.
+
+### Fixed (post-initial-commit pass)
+- **F1 P0:** `vpstack-install` non-TTY hang. Defaults to `telemetry=off` (safest) when no TTY / `--yes` / `CI=true`.
+- **F18 P0:** `vpstack-config get` no longer silently masks corrupt JSON; surfaces error to stderr with exit 1.
+- **F32 P0:** ask-later loop fix as above.
+- **F19 P1:** silent HEADLESS coercion now emits diagnostic.
+
+### Repo
+- Pushed to https://github.com/khamidov17/vpstack (private)
+- About + 12 GitHub topics set
+- 3 starter issues filed for known v0.1.x work
+
+### Tests
+- 40/40 passing (was 34) — added 6 new tests for `vp_run_attacker` input validation
+
 ### Added
 - Repo skeleton: 7 `bin/` scripts, 6 SKILL.md skills, MCP server (7 tools), SpeechBrain recipe with B1 McAdams, test suite (31 passing).
 - `bin/vpstack-detect` activation gate with hybrid heuristic + first-run prompt + explicit override.

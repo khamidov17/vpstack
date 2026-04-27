@@ -6,6 +6,7 @@ Each tool module exposes a `handle(**kwargs)` callable returning a ToolResult di
 from vpstack_mcp.tools import (
     run_baseline,
     run_eval,
+    run_attacker,
     check_submission,
     check_reproducibility,
     get_component_info,
@@ -16,6 +17,7 @@ from vpstack_mcp.tools import (
 __all__ = [
     "run_baseline",
     "run_eval",
+    "run_attacker",
     "check_submission",
     "check_reproducibility",
     "get_component_info",

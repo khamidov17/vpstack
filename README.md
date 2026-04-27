@@ -1,8 +1,12 @@
 # vpstack
 
-> VP2026 voice-privacy toolkit for AI coding agents — Claude Code, Codex, Cursor, Claude Desktop.
+> Voice-privacy research infrastructure for AI coding agents — Claude Code, Codex, Cursor, Claude Desktop.
 
-vpstack auto-activates on voice-anonymization projects and stays silent everywhere else. It encodes domain knowledge for the [VoicePrivacy 2026 challenge](https://www.voiceprivacychallenge.org/) — real B1/B2 baselines, real EER/WER/linkability eval, real reproducibility checks — so AI agents stop hallucinating SpeechBrain conventions and inventing baseline numbers.
+**If you don't work on voice anonymization, this isn't for you.** vpstack auto-activates on voice-privacy projects and stays completely silent everywhere else.
+
+For researchers in the voice-privacy field: vpstack encodes domain knowledge for [VoicePrivacy 2026](https://www.voiceprivacychallenge.org/) (and VP2024 ports planned) — reproducible B1/B2 baselines, official-conformant ASV attackers, full eval (EER + WER + linkability + side-channels), and reproducibility checks — so AI agents stop hallucinating SpeechBrain conventions and inventing baseline numbers. Cite "evaluated with vpstack 0.1.0" the way you cite "trained with SpeechBrain 1.0".
+
+**Challenges supported:** VP2026 (in progress). VP2024 baseline ports planned for v0.2.
 
 **Status: 0.1.0-dev — pre-release.** The packages are not yet on npm/PyPI. Install from source for now (instructions below). APIs may change before v0.1.0.
 
@@ -66,9 +70,9 @@ In an unrelated project, vpstack stays silent.
 
 | Component | Purpose |
 |---|---|
-| **6 Claude Code skills** | `/vp-hypothesis`, `/vp-spike`, `/vp-baseline-compare`, `/vp-eval`, `/vp-repro-check`, `/vp-writeup` |
-| **MCP server** | 7 tools for any MCP-aware agent: `vp_run_baseline`, `vp_run_eval`, `vp_check_submission`, `vp_check_reproducibility`, `vp_get_component_info`, `vp_search_experiments`, `vp_log_experiment` |
-| **SpeechBrain recipe** | Reference implementations of B1 (McAdams), B2 (HuBERT + ECAPA + HiFi-GAN), and stronger starters |
+| **7 Claude Code skills** | `/vp-hypothesis`, `/vp-spike`, `/vp-baseline-compare`, `/vp-attack`, `/vp-eval`, `/vp-repro-check`, `/vp-writeup` |
+| **MCP server** | 8 tools for any MCP-aware agent: `vp_run_baseline`, `vp_run_eval`, `vp_run_attacker`, `vp_check_submission`, `vp_check_reproducibility`, `vp_get_component_info`, `vp_search_experiments`, `vp_log_experiment` |
+| **SpeechBrain recipe** | Reference implementations of B1 (McAdams — implemented), B2 (HuBERT + ECAPA + HiFi-GAN — stub), stronger starters, and the ASV attacker recipe |
 | **Auto-activation** | Detects voice-anonymization projects via heuristic + first-run prompt + explicit override |
 | **Auto-update** | Preamble version check, user always confirms upgrade |
 | **Opt-in telemetry** | Three modes (off / anonymous / community); never sends code, paths, or research data |

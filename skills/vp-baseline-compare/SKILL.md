@@ -55,7 +55,7 @@ If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion:
 On answer:
 - A → `mkdir -p .vpstack && touch .vpstack/enabled` and proceed
 - B → `mkdir -p .vpstack && touch .vpstack/disabled` and exit silently
-- C → exit silently without writing markers
+- C → `mkdir -p .vpstack && touch .vpstack/ask-later` and exit silently. Marker is valid for 60 minutes — vpstack-detect treats it as `DETECTED_CONFIRMED` during that window, preventing re-prompt loops in a multi-skill session. After 60min, the prompt fires again.
 
 After A, also append the project hash to `~/.vpstack/projects-decided` so future runs skip the prompt:
 ```bash

@@ -41,6 +41,9 @@ ERROR_CODES = frozenset({
     "UNKNOWN_COMPONENT",
     "EVAL_BLOCKED_TEST_SPLIT",
     "INTERNAL",
+    # Added for /vp-attack (vp_run_attacker tool)
+    "ATTACKER_TRAINING_FAILED",   # ECAPA loss diverged / NaN'd during semi-informed retrain
+    "ATTACKER_DATA_MISMATCH",     # trial list / enrollment layout mismatch
 })
 
 

@@ -46,7 +46,7 @@ If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion:
 
 On A: `mkdir -p .vpstack && touch .vpstack/enabled`, append project hash to `~/.vpstack/projects-decided`, and proceed.
 On B: `mkdir -p .vpstack && touch .vpstack/disabled`, exit silently.
-On C: exit silently without writing markers.
+On C: `mkdir -p .vpstack && touch .vpstack/ask-later` and exit silently. Marker valid for 60min — prevents re-prompt loops in a multi-skill session.
 
 ## Workflow
 

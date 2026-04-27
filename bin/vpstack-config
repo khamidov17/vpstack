@@ -41,14 +41,25 @@ ensure_config() {
 # Use python for JSON read/write (bash + jq portability is a mess; python3 is on every macOS/Linux dev box).
 py_get() {
   ensure_config
+  # F18 fix: don't silently mask corrupt JSON. A corrupt config that returns ""
+  # for `telemetry` looks identical to "not configured" — and downstream callers
+  # (vpstack-telemetry-log) treat empty as "off". A user who corrupted their
+  # config without knowing it would silently lose telemetry. Surface the corruption.
   python3 - "$CONFIG_FILE" "$1" <<'PY'
 import json, sys
 path, key = sys.argv[1], sys.argv[2]
 try:
     with open(path) as f:
         cfg = json.load(f)
-except (json.JSONDecodeError, FileNotFoundError):
+    if not isinstance(cfg, dict):
+        raise json.JSONDecodeError("config root must be an object", "", 0)
+except FileNotFoundError:
     cfg = {}
+except json.JSONDecodeError as e:
+    print(f"vpstack-config: config.json is invalid JSON: {e}", file=sys.stderr)
+    print(f"  File: {path}", file=sys.stderr)
+    print(f"  Run `vpstack-config set <key> <value>` to see backup + repair guidance.", file=sys.stderr)
+    sys.exit(1)
 val = cfg.get(key, "")
 if val is True: print("true")
 elif val is False: print("false")

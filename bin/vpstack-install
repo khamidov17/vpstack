@@ -147,6 +147,20 @@ function ask(q) {
 }
 
 async function promptTelemetry() {
+  // F1 fix: under non-TTY, --yes, or CI env, never block on input. Default to OFF
+  // (safest privacy posture) so we honor the docs/telemetry.md "off is a real
+  // first-class choice" promise even when no human is at the keyboard.
+  const isInteractive = process.stdin.isTTY && process.stdout.isTTY;
+  const nonInteractive = flags.yes || !isInteractive || process.env.CI === 'true';
+
+  if (nonInteractive) {
+    const { spawnSync } = require('child_process');
+    spawnSync(path.join(PKG_DIR, 'bin', 'vpstack-config'), ['set', 'telemetry', 'off'],
+              { stdio: 'inherit' });
+    log('telemetry mode: off (non-interactive install — change later with `vpstack-config set telemetry [off|anonymous|community]`)');
+    return;
+  }
+
   console.log('');
   console.log('vpstack telemetry — your choice:');
   console.log('  A) community  (recommended) — anonymous device ID + skill name + duration');
@@ -157,10 +171,10 @@ async function promptTelemetry() {
   console.log('Change anytime: vpstack-config set telemetry off');
   console.log('');
   const ans = (await ask('Pick A/B/C: ')).toLowerCase();
-  let mode = 'anonymous';
+  let mode = 'off';  // F1 fix: default unrecognized input to off, not anonymous
   if (ans === 'a' || ans === 'community') mode = 'community';
   else if (ans === 'b' || ans === 'anonymous') mode = 'anonymous';
-  else if (ans === 'c' || ans === 'off') mode = 'off';
+  else if (ans === 'c' || ans === 'off' || ans === '') mode = 'off';
   // Persist via vpstack-config
   const { spawnSync } = require('child_process');
   spawnSync(path.join(PKG_DIR, 'bin', 'vpstack-config'), ['set', 'telemetry', mode], { stdio: 'inherit' });

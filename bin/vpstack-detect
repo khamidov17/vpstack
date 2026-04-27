@@ -131,6 +131,15 @@ elif [ -n "$ENABLED_PATH" ]; then
   result="ENABLED_EXPLICIT"
   reason="found $ENABLED_PATH"
 else
+  # F32 fix: check for "ask later" marker (user answered C in first-run prompt).
+  # If marker exists and is <60min old, treat as DETECTED_CONFIRMED — i.e., don't
+  # re-prompt on every skill invocation. Without this, "C) ask me later" turns
+  # into "ask me every 5 seconds" in a multi-skill session.
+  ASK_LATER_PATH=$(find_ancestor ".vpstack/ask-later" || true)
+  if [ -n "$ASK_LATER_PATH" ] && find "$ASK_LATER_PATH" -mmin -60 -print -quit 2>/dev/null | grep -q .; then
+    result="DETECTED_CONFIRMED"
+    reason="ask-later marker valid (within 60min): $ASK_LATER_PATH"
+  else
   # --- heuristic detection ---
   matched=()
 
@@ -182,6 +191,7 @@ else
     fi
     reason="${matched[*]}"
   fi
+  fi    # close the F32 ASK_LATER else-branch
 fi
 
 # --- emit + write cache ---
