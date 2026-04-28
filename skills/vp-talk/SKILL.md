@@ -3,15 +3,17 @@ name: vp-talk
 version: 0.3.0
 description: |
   Two-mode planning skill for voice anonymization work.
-  Mode R (Research): VP2026 benchmark research — 8 forcing questions that pin down
-  open question, threat model, contribution claim, baseline choice, eval scope, failure
-  modes, and scope discipline. Writes a locked research plan.
-  Mode E (Engineering): Building a real voice anonymization system — 6 domain questions
-  that surface domain, audio format, methods, metrics, compliance, and scale. Generates
-  a domain_config.yaml that subsequent skills read. Gives concrete tool recommendations
-  and honest "bring your own" list.
-  Switch modes any time by saying "switch to research" / "switch to engineering".
-  Run before /vp-hypothesis (Research) or /vp-baseline-compare (Engineering). (vpstack)
+  Two-mode planning skill. Like gstack /office-hours — asks forcing questions,
+  then writes a locked plan that downstream skills use.
+  Mode R (Research): VP2026 benchmark — 8 forcing questions on open question,
+  threat model, contribution claim, baseline, eval scope, failure modes. Writes
+  research-plan.md that /vp-hypothesis references.
+  Mode E (Engineering): Building a real system — 6 domain questions on domain,
+  audio format, methods, metrics, compliance, scale. Writes BOTH domain_config.yaml
+  (read by every skill preamble) AND engineering-plan.md (feeds /vp-plan-eng-review).
+  Gives concrete tool recommendations and honest gaps.
+  Switch modes any time: "switch to research" / "switch to engineering".
+  Run before /vp-hypothesis (Research) or /vp-plan-eng-review (Engineering). (vpstack)
   Voice triggers: "research direction", "office hours", "what should I build",
   "vp talk", "planning session", "help me think through this".
 allowed-tools:
@@ -438,13 +440,114 @@ notes: |
 
 ---
 
+### E — Write engineering design plan
+
+After generating the config, synthesize the conversation into a design plan document. This is the equivalent of gstack's `/office-hours` output — a structured plan that feeds into `/vp-plan-eng-review` and `/vp-plan-design-review`.
+
+```bash
+mkdir -p ~/.vpstack/projects/$SLUG/engineering-plans
+PLAN_ID="$(date +%Y%m%d-%H%M%S)-$(echo "$DOMAIN" | tr -c 'a-zA-Z0-9' '-')"
+```
+
+Use the Write tool to create `~/.vpstack/projects/$SLUG/engineering-plans/$PLAN_ID.md`:
+
+```markdown
+# Engineering Plan: <one-line description of what's being built>
+
+Date: <ISO 8601>
+Project: <slug>
+ID: <plan_id>
+Mode: Engineering
+Status: DRAFT
+
+## What we're building
+<1–2 sentences: the system, the use case, who uses it>
+
+## The real problem
+<What pain does this solve? Be specific — not "anonymize audio" but
+"35-minute call center recordings need speaker identity removed before
+QA team reviews transcripts; current manual redaction takes 2h/recording">
+
+## Domain context (from E1–E2)
+- Audio domain: <DOMAIN>
+- Native sample rate: <SAMPLE_RATE_NATIVE> Hz
+- Resample required: <true|false> (target: 16kHz for all models)
+- Scale: <SCALE>
+- Compliance: <COMPLIANCE>
+
+## Anonymization approach (from E3)
+Methods selected: <METHODS>
+
+Rationale:
+<Why these methods for this domain? E.g.: "OHNN chosen over selection because
+call center audio has only 12 enrolled agents — pool exhaustion is a real risk.
+OHNN generates on-distribution pseudo-speakers without pool dependency.">
+
+## Success criteria (from E4)
+Primary metrics:
+<metric>: <target value and direction — e.g., "EER > 35% (higher = more private)">
+
+Secondary metrics:
+<metric>: <target>
+
+Failure definition:
+<What makes this a failed system? E.g., "EER < 20% on semi-informed attacker
+OR WER > 15% on our existing ASR pipeline">
+
+## Implementation sequence
+1. Set up audio preprocessing (resample to 16kHz, format validation)
+2. Run B1 as baseline anchor via vpstack `/vp-spike`
+3. Implement [primary method] — bring own SpeechBrain recipe
+4. Evaluate: EER via ASV, WER via Whisper, PMOS via UTMOS
+5. Repro-check before writing up
+6. Ship via `/vp-ship`
+
+## Tools required (bring your own)
+<List from E — generate recommendations section>
+
+## vpstack coverage
+What vpstack handles:
+- B1 McAdams baseline anchor
+- Experiment tracking and logging
+- Reproducibility checking (PASS_STRONG / PASS_WEAK)
+- Engineering review gates (/vp-plan-eng-review)
+- Writeup generation
+
+What you bring:
+- [Primary anonymization method] implementation
+- EER evaluation (ASV + trial list)
+- WER evaluation (ASR system)
+- PMOS evaluation (UTMOS or Squim)
+
+## Risks and open questions
+<Named risks — e.g.: "8kHz telephone audio has limited phonetic information;
+HuBERT features may be noisier than on clean read speech. Benchmark B1 on
+actual call center clips before committing to neural pipeline.">
+
+## Next step
+<Specific next action — e.g.: "/vp-hypothesis to formalize the B1 vs OHNN
+ablation, then /vp-spike to run both on 10 held-out recordings">
+
+## Linked artifacts
+- Domain config: ~/.vpstack/projects/<slug>/domain_config.yaml
+- Hypotheses: (fill via /vp-hypothesis)
+- Experiments: (fill via spikes and runs)
+```
+
+Ask: "Lock this plan?" A) Lock  B) Keep draft  C) Discard
+
+On A: set `Status: LOCKED`. This plan feeds `/vp-plan-eng-review` — run that next for 18 engineering quality gates against this document.
+
+---
+
 ### E — Suggest next step
 
-Based on their methods and metrics:
+Based on their answers and whether the plan is locked:
 
-- If they have audio ready → `/vp-hypothesis` to formalize what they're testing, then `/vp-spike` to run B1 as baseline anchor
-- If they don't have audio yet → tell them what data they need (format, trial structure for EER eval)
-- If compliance was flagged → verify `vpstack-config get telemetry` returns `off` before any runs
+- **Plan locked, audio ready** → "Run `/vp-plan-eng-review` to review the engineering plan, then `/vp-hypothesis` to formalize your first experiment."
+- **Plan locked, no audio yet** → "Get audio in the right format first (resample to 16kHz). Then `/vp-hypothesis` to formalize what you're testing."
+- **Compliance flagged** → "Before anything else: `~/.claude/skills/vpstack/bin/vpstack-config set telemetry off` — verify with `vpstack-config get telemetry`."
+- **Methods include OHNN/Selection/B2** → "Install SpeechBrain: `pip install speechbrain`. The official VP2026 challenge repo has the B2/attacker recipes."
 
 ---
 
