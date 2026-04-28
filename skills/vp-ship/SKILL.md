@@ -89,9 +89,13 @@ If FAIL → BLOCK SHIP. Reproducibility regression is a P0 — would silently in
 
 If the diff touches `mcp-server/vpstack_mcp/tools/run_eval.py`, `mcp-server/vpstack_mcp/tools/check_submission.py`, or any recipe `run.py`:
 
-```python
-# Validate against the expected VP2026 layout
-result = mcp_client.call("vp_check_submission", {"submission_path": "<test fixture or recent run>"})
+```bash
+# Validate VP2026 submission directory structure
+SUBMISSION_DIR="<test fixture or recent run>"
+ls "$SUBMISSION_DIR"/eer.json 2>/dev/null || echo "MISSING: eer.json"
+ls "$SUBMISSION_DIR"/wer.json 2>/dev/null || echo "MISSING: wer.json"
+ls "$SUBMISSION_DIR"/anonymized/ 2>/dev/null || echo "MISSING: anonymized/"
+find "$SUBMISSION_DIR" -name "*.wav" | wc -l
 ```
 
 If errors → BLOCK if user passed `--official` flag, else surface as a warning.

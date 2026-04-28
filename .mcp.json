@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "vpstack": {
-      "command": "vpstack-mcp",
-      "args": []
-    }
-  }
-}

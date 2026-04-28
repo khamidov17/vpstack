@@ -1,435 +1,147 @@
 # vpstack
 
-> Voice-privacy research infrastructure for AI coding agents — Claude Code, Codex, Cursor, Claude Desktop.
+> Voice-privacy research infrastructure for AI coding agents.
 
 **If you don't work on voice anonymization, this isn't for you.** vpstack auto-activates on voice-privacy projects and stays completely silent everywhere else.
 
-For researchers in the voice-privacy field: vpstack encodes domain knowledge for [VoicePrivacy 2026](https://www.voiceprivacychallenge.org/) (and VP2024 ports planned) — reproducible B1/B2 baselines, official-conformant ASV attackers, full eval (EER + WER + linkability + side-channels), and reproducibility checks — so AI agents stop hallucinating SpeechBrain conventions and inventing baseline numbers. Cite "evaluated with vpstack 0.1.0" the way you cite "trained with SpeechBrain 1.0".
+For researchers in the voice-privacy field: vpstack gives AI agents (Claude Code, Codex, Cursor) the domain knowledge and workflow automation they need for VoicePrivacy 2026 — so they stop hallucinating baseline numbers and inventing SpeechBrain conventions.
 
-**Challenges supported:** VP2026 (in progress). VP2024 baseline ports planned for v0.2.
+**Architecture:** Pure markdown skills + bash. No MCP server. No Python packages to install beyond the actual ML dependencies you already need. Claude is the intelligence; the recipe scripts are the executor.
 
-**Status: 0.1.0-dev — pre-release.** The packages are not yet on npm/PyPI. Install from source for now (instructions below). APIs may change before v0.1.0.
+**Status: v0.2.0-dev — pre-release.** Install from source.
 
 ---
 
 ## Install
 
-### Step 1: Clone the repo
-
 ```bash
+# 1. Clone skills + bin scripts
 git clone https://github.com/khamidov17/vpstack.git ~/.claude/skills/vpstack
 chmod +x ~/.claude/skills/vpstack/bin/*
-```
 
-### Step 2: Install the MCP server
-
-```bash
-cd ~/.claude/skills/vpstack/mcp-server && pip install -e .
-```
-
-### Step 3: Install the SpeechBrain recipe (for B1 anonymization)
-
-```bash
+# 2. Install the SpeechBrain recipe (B1 McAdams baseline)
 cd ~/.claude/skills/vpstack/speechbrain_voice_anon && pip install -e .
+
+# 3. (Optional) Restart Claude Code and open a voice-anonymization project
 ```
 
-### Step 4: Connect your AI coding agent
+That's it. No MCP server. No additional config. Restart Claude Code and type `/vp-baseline-compare` in a voice-anonymization project.
 
-Pick the client you use. All three support the same stdio MCP server — `vpstack-mcp`.
+### For Codex
+
+Copy `AGENTS.md` from this repo into your voice-anonymization project root. It gives Codex the same domain context Claude gets automatically.
+
+### For Cursor
+
+Add the `docs/claude-md-template.md` content to your project's `.cursorrules` or CLAUDE.md.
 
 ---
 
-#### Claude Code
+## How It Works
 
-The skills directory (`~/.claude/skills/vpstack/`) is already wired by Step 1 — restart Claude Code and type `/vp-baseline-compare` in a voice-anonymization project.
+vpstack skills are markdown files that tell Claude exactly what to do. When you run `/vp-baseline-compare`, Claude reads the skill and follows it step by step: runs bash commands, interprets output, asks you questions, logs results. No intermediate layer.
 
-For the MCP tools (called by skills automatically), add via CLI:
-
-```bash
-claude mcp add vpstack -- vpstack-mcp
+```
+You → /vp-baseline-compare → Claude reads SKILL.md →
+  Claude runs: python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.run --data_path ...
+  Claude reads: stdout JSON
+  Claude shows: comparison table
+  Claude writes: ~/.vpstack/projects/{slug}/experiments/{id}/summary.json
 ```
 
-Or drop `.mcp.json` at your project root (already included in this repo):
-
-```json
-{
-  "mcpServers": {
-    "vpstack": { "command": "vpstack-mcp", "args": [] }
-  }
-}
-```
+All experiment state lives in `~/.vpstack/projects/{slug}/`. Skills write there using the Write tool directly. No database, no server, no daemon.
 
 ---
 
-#### Codex CLI
+## Skills
 
-```bash
-# Use the absolute path — Codex may not inherit your shell PATH
-codex mcp add vpstack -- $(which vpstack-mcp)
+Type these in Claude Code (or any AI agent with the skills installed).
 
-# Verify
-codex mcp list
-# Name     Command      Status
-# vpstack  vpstack-mcp  enabled
-```
-
-Codex reads `AGENTS.md` at the repo root for domain context (analogous to `CLAUDE.md`). This repo includes one — copy it to your voice-anonymization project as well:
-
-```bash
-cp ~/.claude/skills/vpstack/AGENTS.md /path/to/your/vp2026-project/AGENTS.md
-```
-
----
-
-#### Cursor
-
-Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-local):
-
-```json
-{
-  "mcpServers": {
-    "vpstack": { "command": "vpstack-mcp", "args": [] }
-  }
-}
-```
-
-If `vpstack-mcp` is not on Cursor's PATH (common), use the absolute path:
-
-```json
-{
-  "mcpServers": {
-    "vpstack": {
-      "command": "/path/to/venv/bin/vpstack-mcp",
-      "args": []
-    }
-  }
-}
-```
-
-Find the path with `which vpstack-mcp`. Then reload MCP servers via the Cursor command palette ("Developer: Reload MCP Servers").
+| Skill | When to use |
+|---|---|
+| `/vp-hypothesis` | Formalize an experiment before running anything |
+| `/vp-spike` | Run 1-3 quick variants, get CONFIRMED/REFUTED/INCONCLUSIVE verdicts |
+| `/vp-baseline-compare` | "Am I beating B1?" — runs B1 + shows delta table |
+| `/vp-attack` | Run ASV attacker (ignorant / lazy-informed / semi-informed) |
+| `/vp-eval` | Full VP2026 scorecard (B1 anonymization + attacker; full eval pipeline pending) |
+| `/vp-repro-check` | Verify seeds, splits, checkpoint hashes before submission |
+| `/vp-implement` | Implement a recipe with license + repro + test gates |
+| `/vp-investigate` | Domain-aware debugging: "my EER looks wrong" |
+| `/vp-writeup` | Internal experiment report from logged data (no LLM citations) |
+| `/vp-talk` | Research planning — threat model, contribution claim, open questions |
+| `/vp-ship` | Ship with VP-specific gates (attacker smoke, repro check, submission format) |
+| `/vp-qa` | Multi-tier QA of anonymization system + codebase |
+| `/vp-plan-eng-review` | Engineering review with 18 VP-specific quality gates |
+| `/vp-plan-design-review` | Design review for recipe architecture |
+| `/vp-autoplan` | Chain hypothesis → spike → baseline-compare end-to-end |
 
 ---
 
-### After v0.1.0 publish
+## What's Implemented vs Pending
 
-Once the packages are on the registries (target: when B2 baseline reproducibility lands), install via:
-
-```bash
-npx vpstack@latest                    # skills + bin
-pip install vpstack-mcp               # MCP server only
-pip install speechbrain-voice-anon    # recipe only
-```
-
-The installer auto-detects which AI coding agent you have (Claude Code, Codex, Cursor, Cline) and installs accordingly.
-
----
-
-## Quick Start
-
-In a voice-anonymization project, just type `/vp-baseline-compare` in Claude Code. vpstack detects the project, asks once whether to enable, then runs B1 + B2 + your system and returns a delta table:
-
-```
-EER (lower=better)    B1     B2     yours    Δ vs B1
-                      14.2   12.3   11.1     -3.1
-WER (lower=better)    8.4    8.1    8.0      -0.4
-Linkability           0.45   0.42   0.39     -0.06
-```
-
-(*Numbers above are illustrative — your actual numbers will differ.*)
-
-In an unrelated project, vpstack stays completely silent — no prompts, no output, nothing.
+| Component | Status |
+|---|---|
+| B1 McAdams baseline (anonymization) | ✅ Implemented |
+| B2 neural baseline (HuBERT+ECAPA+HiFi-GAN) | ⏳ Pending v0.3 |
+| ASV attacker (all 3 conditions) | ✅ Implemented (recipe structure; needs GPU + VP2026 data) |
+| Full eval pipeline (EER + WER + linkability) | ⏳ Pending v0.3 |
+| All 15 skills | ✅ Markdown complete |
+| Experiment logging | ✅ (Write tool → ~/.vpstack/) |
 
 ---
 
-## Skills reference
-
-Type these in Claude Code (or your MCP-aware agent of choice). Each skill writes its artifacts to `~/.vpstack/projects/{slug}/` and logs to opt-in telemetry if enabled.
-
-### `/vp-hypothesis` — Formalize an experiment before code runs
-
-> Researcher: *"I want to test if HuBERT layer 6 gives better anonymization than layer 12."*
-
-vpstack walks them through 7 questions: hypothesis text, component changed, baseline, expected metric direction, expected magnitude, acceptance criteria, components held constant. Writes a structured doc to `~/.vpstack/projects/{slug}/hypotheses/{id}.md`. The doc is what you refer back to when interpreting results — it stops "I'll know it when I see it" experiments before they consume GPU time.
-
-```
-/vp-hypothesis
-→ "What's the hypothesis?"
-→ "Replacing HuBERT layer 12 with layer 6 improves EER by ≥0.5pp without WER regression."
-→ ... 6 more questions ...
-→ Writes ~/.vpstack/projects/my-vp-system/hypotheses/20260428-141503-replacing-hubert-layer-12.md
-→ "Hypothesis logged. Next: run /vp-spike to test it."
-```
-
-### `/vp-spike` — Run 1–3 focused ablations with given/when/then verdicts
-
-> Researcher: *"Run my hypothesis as 3 variants: layer 6, layer 9, layer 12."*
-
-Time-boxed ablation runner. Loads the hypothesis (if you ran `/vp-hypothesis` first), prompts for 1–3 variants, runs each on the dev set, returns a verdict per variant (CONFIRMED / REFUTED / INCONCLUSIVE). Replaces ad-hoc "I'll just try a few things" with a structured trace.
-
-```
-/vp-spike
-→ Found hypothesis: "Replacing HuBERT layer 12..."  Use it?
-→ How many variants?  3 (three-way)
-→ Variant 1: name="layer-6"  config: hparams.content_encoder.layer_idx=6
-→ Variant 2: name="layer-9"  config: hparams.content_encoder.layer_idx=9
-→ Variant 3: name="layer-12" config: hparams.content_encoder.layer_idx=12
-→ ETA: 3 × 45min = 2h15min on a single GPU. Continue?
-→ ... runs ...
-→ | Variant   | EER | WER | Verdict     |
-  | layer-6   | 11.1 | 8.0 | CONFIRMED   |
-  | layer-9   | 11.8 | 8.1 | CONFIRMED   |
-  | layer-12  | 12.3 | 8.0 | REFUTED     |
-→ Hypothesis confirmed: layer 6 < layer 9 < layer 12 EER. Decision: ship layer-6.
-```
-
-### `/vp-baseline-compare` — How does my system stack up against B1 and B2?
-
-> Researcher: *"Quick check — am I beating the strong baseline?"*
-
-The daily-use skill. Runs B1 (McAdams) + B2 (neural) on the same eval set as your system, returns a delta table. Run after every meaningful change to know if you're improving against the canonical references.
-
-```
-/vp-baseline-compare
-→ Which system?  Path to anonymized audio: ~/work/vp2026/anon-output/
-→ Running B1 (~5min) + B2 (~45min) + scoring your system (~20min)...
-→ | Metric              | B1    | B2    | yours | Δ vs B2 |
-  | EER (lower=better)  | 14.2  | 12.3  | 11.1  | -1.2    |
-  | WER (lower=better)  |  8.4  |  8.1  |  8.0  | -0.1    |
-  | Linkability         |  0.45 |  0.42 |  0.39 | -0.03   |
-→ You beat B2 on EER. Suggest /vp-eval --official for a full submission scorecard.
-```
-
-### `/vp-attack` — Run an ASV attacker against my anonymized output
-
-> Researcher: *"Did I actually hide the speaker, or am I fooling myself?"*
-
-The privacy skill. Runs an ASV attacker (the official VP2026 semi-informed ECAPA-TDNN by default) against your anonymized output and reports the EER an attacker would achieve when trying to re-identify the original speaker. **A defense without an attacker run is unfalsifiable** — this is the central privacy question.
-
-Three official VPC conditions: `ignorant` (~5min sanity floor), `lazy_informed` (~10min, pretrained ECAPA + anonymized enrollment), `semi_informed` (~4–12h, ECAPA retrained on your anonymized train-clean-360 — the official ranking attacker).
-
-```
-/vp-attack
-→ Which anonymized output?  ~/work/vp2026/anon-output/
-→ Attacker condition?  semi-informed (recommended, official ranking)
-→ Note: this anonymizes train-clean-360 (~360h audio) then trains ECAPA. ETA: 8h. Continue?
-→ ... runs ...
-→ VP2026 Attacker Results
-  Condition: semi_informed
-  | Metric                  | Female | Male  | Overall |
-  | EER % (higher = better) | 38.2   | 35.7  | 36.9    |
-  | Linkability (Cllr)      | 0.41   | 0.43  | 0.42    |
-  Reference points:  B1: 34.8  B2: 28.1  Random: 50.0
-  Verdict: privacy delta vs B2 = +8.8 EER (your system is harder to attack)
-→ Suggest /vp-eval --official for the full submission scorecard.
-```
-
-### `/vp-eval` — Full VP2026 evaluation pipeline
-
-> Researcher: *"I'm submitting to the challenge — give me the complete scorecard."*
-
-The submission-prep skill. Runs the full VP2026 protocol: per-gender EER under all attacker conditions, WER, linkability, side-channel scores (age / pitch / emotion preservation). Validates submission format. Distinct from `/vp-baseline-compare` (which is the daily quick check) — `/vp-eval` is the publication-grade run.
-
-```
-/vp-eval --official
-→ Confirms held-out 'test' split usage (blocks accidental overfitting)
-→ Runs all 3 attacker conditions + WER + side-channels (~12h on single GPU)
-→ Validates submission directory layout
-→ Outputs: ~/.vpstack/projects/{slug}/experiments/{id}/submission/
-→ "Submission validation: PASS. Ready to upload to voiceprivacychallenge.org."
-```
-
-### `/vp-repro-check` — Will my numbers reproduce?
-
-> Researcher: *"My collaborator can't reproduce my EER. What's wrong?"*
-
-Validates that an experiment can be reproduced. Checks: pinned seed, explicit dataset splits, hash-verified model checkpoints, complete hparams (no `TODO` placeholders), deterministic mode. Returns PASS or FAIL with specific reasons. Catches silent drift before it costs you a submission rejection.
-
-```
-/vp-repro-check
-→ Most recent experiment? exp-2026-04-28-141503
-→ Reproducibility check: FAIL
-  ✗ seed: missing — config has no 'seed' key
-  ✗ checkpoints: hifigan_anon hash mismatch (expected sha256:abc..., got sha256:def...)
-  Other items (passed): splits, hparams, determinism
-  Fix the marked issues and re-run /vp-repro-check.
-```
-
-**Limitation:** does NOT track vpstack version itself — that's a deliberate tradeoff per DESIGN.md. Record vpstack version in your lab notebook.
-
-### `/vp-writeup` — Generate an internal experiment report
-
-> Researcher: *"Pull together what we did this week so I can show my advisor."*
-
-Generates a structured engineering log from your `~/.vpstack/projects/{slug}/` artifacts: methods, hyperparameters, results table, config hash. **Does NOT generate citations or research-paper prose** — that's the researcher's job. Produces a Markdown report you can paste into your notes, share with a labmate, or attach to a PR.
-
-```
-/vp-writeup
-→ Which experiments?  Most recent 5
-→ Generates ~/.vpstack/projects/{slug}/reports/report-20260428.md
-  with: methods table, hparams dump, results table, config hashes, repro status.
-  No abstract. No related work. No citations.
-```
-
-This decision was deliberate: LLM-generated citations hallucinate, and a wrong citation in someone's published paper is exactly the harm vpstack's correctness bar forbids.
-
----
-
-## MCP tools reference
-
-11 tools exposed by `vpstack-mcp`. Skills call them automatically; call them directly for custom workflows.
-
-### Session + memory tools (call these first)
-
-| Tool | Returns | Cost | What it does |
-|---|---|---|---|
-| `vp_get_context()` | compact session state | <100ms | **Call this first every session.** Best EER, last 5 experiments, active hypothesis, last spike verdict, EER trend, learnings. Replaces 3-5 individual reads. |
-| `vp_get_leaderboard(sort_by, limit)` | ranked experiment table | <100ms | All experiments ranked by EER/WER/linkability. B1/B2 reference rows + beats_B1/beats_B2 flags. Replaces N individual experiment reads. |
-| `vp_log_learning(key, insight, type, confidence)` | `{logged, path}` | <100ms | Persist a research insight to `learnings.jsonl`. Surfaces in future `vp_get_context` calls. |
-| `vp_get_learnings(query, type, component)` | matching learnings | <100ms | Search logged insights. Call before debugging — the failure mode may already be catalogued. |
-
-### Experiment tools
-
-| Tool | Returns | Cost | What it does |
-|---|---|---|---|
-| `vp_log_experiment(exp_id, metrics, config_hash, hypothesis, method, tags)` | `{logged, path}` | <100ms | Atomically log an experiment. Pass `hypothesis`/`method`/`tags` so `vp_search_experiments` finds it. |
-| `vp_search_experiments(query, limit)` | matching experiments | <1s | Substring search across id, hypothesis, method, system_name, tags. |
-
-### Eval + validation tools
-
-| Tool | Returns | Cost | What it does |
-|---|---|---|---|
-| `vp_run_baseline(baseline, data_path, seed)` | `{eer, wer, linkability, config_hash}` | B1: ~5min CPU. B2: ~45min GPU. | Run B1 (McAdams) or B2 (neural) baseline. B1 eval stubbed in v0.1 — use B2 for actual numbers. |
-| `vp_run_attacker(anonymized_path, ..., attacker_condition)` | per-gender EER + Cllr | semi-informed: 4–12h GPU | Run the official ASV attacker. semi_informed is the ranking condition. |
-| `vp_run_eval(system_path, eval_set)` | full scorecard | ~12h GPU | (NOT YET IMPLEMENTED — v0.2) Full VP2026 eval pipeline. |
-| `vp_check_submission(submission_path)` | `{valid, errors, warnings}` | <1s | Validate submission format before upload. |
-| `vp_check_reproducibility(config_path)` | `{status, issues, passed}` | <1s | 5-point reproducibility check: seed, splits, checkpoints, hparams, determinism. |
-
-### Knowledge tools
-
-| Tool | Returns | Cost | What it does |
-|---|---|---|---|
-| `vp_get_component_info(component_name)` | `{description, tradeoffs, known_issues, papers, license}` | <1s | Canonical tradeoff info for: hubert, contentvec, wavlm, ecapa-tdnn, hifi-gan, mcadams, plda. Includes `known_issues` — check before debugging. |
-
-Every tool returns `{"ok": bool, "result": ..., "error": {"code": str, "message": str, "hint": str}}`. Error codes from a strict allowlist in `mcp-server/vpstack_mcp/errors.py`.
-
-**Token efficiency note:** A typical research session uses 3000-6000 fewer tokens when starting with `vp_get_context` + `vp_get_leaderboard` instead of re-establishing context manually. The component `known_issues` catalog prevents re-debugging known failure modes.
-
----
-
-## Typical session walkthrough
-
-What a researcher's first VP2026 work session with vpstack looks like:
+## Typical Session
 
 ```
 $ cd ~/work/vp2026-my-system
-$ # First time using vpstack here — first-run prompt fires once
+# First time: vpstack asks once whether to activate here
 
 Claude Code> /vp-hypothesis
-  → answers 7 questions about the experiment they want to run
-  → ~/.vpstack/projects/vp2026-my-system-{hash}/hypotheses/20260428-...md written
+  → 7 questions about your experiment
+  → Writes ~/.vpstack/projects/{slug}/hypotheses/{id}.md
 
 Claude Code> /vp-spike
-  → "Found hypothesis. Use it?  Yes."
-  → 3 variants run on dev set, ~2h15min on single GPU
-  → spike doc written, hypothesis updated with verdict
+  → Runs 3 B1 variants via bash, reads JSON output
+  → Returns CONFIRMED / REFUTED / INCONCLUSIVE per variant
 
 Claude Code> /vp-baseline-compare
-  → quick "did I beat B2?" check, ~70min on GPU
-  → delta table printed
-
-Claude Code> /vp-attack --condition lazy_informed
-  → 10-minute sanity check: does even a weak attacker re-identify?
-  → if EER below 30, suggest /vp-spike to ablate
+  → Runs B1, builds delta table
+  → "Your system shows stronger privacy than B1."
 
 Claude Code> /vp-attack --condition semi_informed
-  → 8h overnight run with the official ranking attacker
-  → wakes up to a privacy-vs-utility scorecard
+  → Runs attacker recipe, reads EER from stdout
+  → "semi-informed EER: 38.2% — above random, privacy holds"
 
 Claude Code> /vp-repro-check
-  → verify the run is reproducible before sharing or submitting
+  → bash grep checks on your config YAML
   → PASS / FAIL with specific reasons
 
-Claude Code> /vp-eval --official
-  → full submission scorecard, ~12h
-  → submission directory ready to upload
-
 Claude Code> /vp-writeup
-  → engineering log for advisor / labmate / PR
-  → no citations, just structured facts from logs
+  → Reads your experiment JSONs, generates structured report
+  → No citations (LLM citations hallucinate — deliberately excluded)
 ```
 
-In an unrelated project (Rails, Go CLI, NLP repo with no voice signals), none of these skills surface. vpstack stays silent.
-
 ---
 
-## What's in v0.1
+## Project State
 
-| Component | Purpose |
-|---|---|
-| **15 Claude Code skills** | Full research lifecycle. See "Skills reference" below. |
-| **MCP server** | 8 tools for any MCP-aware agent: `vp_run_baseline`, `vp_run_eval`, `vp_run_attacker`, `vp_check_submission`, `vp_check_reproducibility`, `vp_get_component_info`, `vp_search_experiments`, `vp_log_experiment` |
-| **SpeechBrain recipe** | Reference implementations of B1 (McAdams — implemented), B2 (HuBERT + ECAPA + HiFi-GAN — stub), stronger starters, and the ASV attacker recipe |
-| **Auto-activation** | Detects voice-anonymization projects via heuristic + first-run prompt + explicit override |
-| **Auto-update** | Preamble version check, user always confirms upgrade |
-| **Opt-in telemetry** | Three modes (off / anonymous / community); never sends code, paths, or research data |
-
-### The 15 skills, organized by lifecycle phase
-
-| Phase | Skill | When to use |
-|---|---|---|
-| **Direction** | `/vp-talk` | Open question, threat model, contribution claim — before any hypothesis |
-| **Plan** | `/vp-hypothesis` | Formalize ONE experiment (after direction is set) |
-| | `/vp-spike` | Run 1–3 quick variants to test a hypothesis |
-| **Review** | `/vp-plan-design-review` | Recipe / attacker / eval architecture review BEFORE coding |
-| | `/vp-plan-eng-review` | 18 VP-specific quality gates layered on gstack's eng review |
-| **Build** | `/vp-implement` | Orchestrated implementation with pre/during/post gates |
-| **Measure** | `/vp-baseline-compare` | Daily check: B1 + B2 + your system delta table |
-| | `/vp-attack` | Run ASV attacker (the privacy question) |
-| | `/vp-eval` | Full VP2026 submission scorecard |
-| | `/vp-repro-check` | Verify seeds, splits, checkpoints, hparams |
-| **Validate** | `/vp-qa` | Multi-tier QA: repro + attacker smoke + submission format + tests |
-| | `/vp-investigate` | Domain-aware debugging (EER weird, WER tanked, repro fails) |
-| **Ship** | `/vp-ship` | VP-aware ship with gates: tests, repro, attacker smoke, submission format |
-| **Document** | `/vp-writeup` | Internal experiment report (NO citations, NO paper prose) |
-| **Lifecycle** | `/vp-autoplan` | Sequence the above end-to-end with check-in gates |
-
----
-
-## Give your AI agent voice-anon context (recommended)
-
-When you enable vpstack in a project, drop the domain-context template into your project's `CLAUDE.md` so any AI agent (Claude Code, Codex, Cursor) has the right priors immediately:
+Logged experiments live at `~/.vpstack/projects/{slug}/experiments/`. Each is a directory with `summary.json`. Browse them:
 
 ```bash
-# In your voice-anonymization project root, after enabling vpstack:
-cat ~/.claude/skills/vpstack/docs/claude-md-template.md >> CLAUDE.md
-# Then edit the <TODO: ...> section at the top to describe your specific project.
+ls ~/.vpstack/projects/$(~/.claude/skills/vpstack/bin/vpstack-slug)/experiments/
+cat ~/.vpstack/projects/$(~/.claude/skills/vpstack/bin/vpstack-slug)/experiments/b1-reference/summary.json
 ```
 
-The template gives the agent: VP2026 metric directions (privacy = HIGHER EER, utility = LOWER WER), canonical baselines, attacker conditions, dataset conventions, model licenses, and routing rules ("when user asks X, use vpstack skill Y instead of writing a one-off script"). Without this, agents tend to invent SpeechBrain conventions or hallucinate baseline numbers; with it, they stay on-rails.
-
-See [docs/claude-md-template.md](docs/claude-md-template.md) for the full template.
+No dashboard, no server. Raw filesystem. Skills read these files directly via bash.
 
 ---
 
-## Documentation
+## Domain Knowledge
 
-- [CLAUDE.md](CLAUDE.md) — context for AI agents working IN this repo (contributing to vpstack itself)
-- [docs/claude-md-template.md](docs/claude-md-template.md) — context to drop into YOUR voice-anon project's CLAUDE.md
-- [DESIGN.md](DESIGN.md) — full architecture and design decisions
-- [TEST-PLAN.md](TEST-PLAN.md) — 73 tests, 7 critical CI gates
-- [LICENSING.md](LICENSING.md) — license audit and redistribution posture
-- [docs/quick-start.md](docs/quick-start.md) — getting started in 30 minutes
-- [docs/activation.md](docs/activation.md) — how auto-activation works
-- [docs/telemetry.md](docs/telemetry.md) — what gets sent, what doesn't
+The full VP2026 domain reference (metrics, components, attacker conditions, common mistakes) lives at [`docs/domain.md`](docs/domain.md). Claude reads this when skills invoke it. You can also append it to your project's CLAUDE.md for richer context.
 
 ---
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-
----
-
-## Contributing
-
-vpstack is built for the VP2026 research community. Issues, PRs, and feedback all welcome. The bar is correctness — wrong baseline numbers propagate to citations, so we hold the recipe to a higher standard than mass-market dev tools.
+Apache 2.0. Never import or vendor VP2024 GPLv3 code. Implement from the [VP2024 Eval Plan PDF](https://inria.hal.science/hal-04531444v1/) instead.

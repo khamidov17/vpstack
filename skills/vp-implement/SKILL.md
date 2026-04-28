@@ -171,12 +171,23 @@ sys.exit(1 if missing else 0)
 
 If any YAML was created/modified:
 
-```python
-report = mcp_client.call("vp_check_reproducibility", {"config_path": yaml_path})
-if report.result["status"] != "PASS":
-    # BLOCKED: REPRO_CHECK_FAIL — surface report.result["issues"] verbatim. Do NOT auto-fix.
-    ...
+Run the repro check via bash:
+
+```bash
+# Check seed
+grep -E "^seed: [0-9]+" "$yaml_path" || echo "FAIL: seed missing or not an integer"
+# Check splits
+grep -E "^(data|splits):" "$yaml_path" || echo "FAIL: no data/splits section"
+grep -v "auto" <(grep -A5 "^data:" "$yaml_path" 2>/dev/null) || echo "WARN: auto-detected split"
+# Check placeholder hparams
+grep -E "TODO|FILL_ME" "$yaml_path" && echo "FAIL: placeholder hparams"
+# Check determinism
+grep -E "deterministic: true|torch_deterministic: true" "$yaml_path" || echo "WARN: not deterministic"
+# Check checkpoint lockfile
+ls "$(dirname $yaml_path)/checkpoints.lock" 2>/dev/null || echo "WARN: no checkpoints.lock"
 ```
+
+If any FAIL lines appear → BLOCKED: REPRO_CHECK_FAIL. Surface the specific failing checks verbatim. Do NOT auto-fix.
 
 ### Step 9: Test-regression gate
 
@@ -193,18 +204,27 @@ The 7 critical CG tests live in this set — they're checked here.
 
 ### Step 10: Log to experiment tracker
 
-```python
-exp_id = f"impl-{slug(target)}-{ts}"
-mcp_client.call("vp_log_experiment", {
-    "exp_id": exp_id,
-    "metrics": {
-        "tests_passed": tests_passed_count,
-        "ruff_clean": True,
-        "repro_check": "PASS" if had_yaml else "N/A",
-        "contract_type": CONTRACT_TYPE,
-    },
-    "config_hash": config_hash if has_recipe_runner else "n/a",
-})
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(pwd)")
+EXP_ID="impl-$(basename $TARGET_PATH | tr '/' '-')-$(date +%Y%m%dT%H%M%S)"
+mkdir -p ~/.vpstack/projects/$SLUG/experiments/$EXP_ID
+```
+
+Use the Write tool to create `~/.vpstack/projects/$SLUG/experiments/$EXP_ID/summary.json`:
+
+```json
+{
+  "id": "<EXP_ID>",
+  "date": "<ISO 8601>",
+  "skill": "vp-implement",
+  "config_hash": "<config_hash from recipe or 'n/a'>",
+  "metrics": {
+    "tests_passed": "<count>",
+    "ruff_clean": true,
+    "repro_check": "<PASS or N/A>",
+    "contract_type": "<CONTRACT_TYPE>"
+  }
+}
 ```
 
 ### Step 11: Update hypothesis status (skip if exploratory)

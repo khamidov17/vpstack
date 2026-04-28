@@ -35,11 +35,23 @@ esac
 if [ -n "$UPGRADE_AVAILABLE" ]; then
   echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
 fi
+
+TEL_START=$(date +%s)
 ```
 
 ## First-run gate
 
-If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion (Yes / No / Ask later) — same shape as in `vp-baseline-compare`. On Yes: `mkdir -p .vpstack && touch .vpstack/enabled`, append project hash to `~/.vpstack/projects-decided`. On No: `mkdir -p .vpstack && touch .vpstack/disabled`, exit. On C: `touch .vpstack/ask-later`, exit (60min reprompt suppression).
+If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion:
+
+> "This project looks like voice-anonymization work (matched: $ACTIVATION_REASON). Enable vpstack here?"
+>
+> A) Yes, enable for this project
+> B) No, silence vpstack on this project forever
+> C) Ask me again next time
+
+On A: `mkdir -p .vpstack && touch .vpstack/enabled`, append project hash to `~/.vpstack/projects-decided`, and proceed.
+On B: `mkdir -p .vpstack && touch .vpstack/disabled`, exit silently.
+On C: `mkdir -p .vpstack && touch .vpstack/ask-later` and exit silently. Marker valid for 60min — prevents re-prompt loops in a multi-skill session.
 
 ## Workflow
 
@@ -50,12 +62,12 @@ Ask via AskUserQuestion:
 > "Which anonymized output should the attacker target?"
 >
 > A) Path to a directory with anonymized .wav files (system already run)
-> B) Path to a SpeechBrain-style anonymizer config that vpstack should run first
+> B) My system hasn't been run yet — run B1 first so I have a baseline to attack
 > C) Cancel — I want to /vp-baseline-compare first
 
-If A: ask for the path. Validate it exists, contains .wav files, and that the layout matches a VP2026 trial structure (enrollment/ + trial/ subdirs, or a `trial_list.txt`). If layout is non-standard, ask the user for explicit `enrollment_path` and `trial_path`.
+If A: ask for the path. Validate it exists and contains .wav files. Check whether the layout matches a VP2026 trial structure (enrollment/ + trial/ subdirs, or a `trial_list.txt`). If layout is non-standard, ask the user for explicit `enrollment_path` and `trial_path`.
 
-If B: call `vp_run_eval` first to produce the anonymized output, then continue with the path it returned.
+If B: tell the user — "Run the B1 recipe first with your anonymizer config, then re-invoke /vp-attack with the output path." Suggest `/vp-baseline-compare` to do this with full B1+B2 scaffolding. Exit.
 
 If C: exit cleanly and suggest `/vp-baseline-compare`.
 
@@ -70,83 +82,106 @@ Ask via AskUserQuestion:
 > C) ignorant — pretrained VoxCeleb ECAPA, no enrollment anonymization. Fastest: ~5 min. Sanity floor.
 > D) all three — run all conditions back-to-back (most expensive, most informative).
 
-If user picks A or D and there is no anonymized train-clean-360 yet, warn:
+If user picks A or D and there is no anonymized train-clean-360 yet, warn via AskUserQuestion:
 
-> "Semi-informed requires anonymizing train-clean-360 with your system (~360 hours of audio). Estimated GPU time: 6–12h for anonymization + 4–8h for ASV training. Continue?"
+> "Semi-informed requires anonymizing train-clean-360 (~360 hours of audio) with your system before retraining the ASV. Estimated GPU time: 6–12h for anonymization + 4–8h for ASV retraining. Continue?"
+>
+> A) Yes, proceed
+> B) No, run lazy-informed instead
+
+Record the chosen condition(s) as `CONDITION` (one of: `ignorant`, `lazy_informed`, `semi_informed`). For option D, run the steps below three times in order: ignorant → lazy_informed → semi_informed.
 
 ### Step 3: Run the attacker
 
-Call MCP tool `vp_run_attacker`:
+For each condition to run, execute:
 
-```python
-result = mcp_client.call("vp_run_attacker", {
-    "anonymized_path": anonymized_path,
-    "enrollment_path": enrollment_path,
-    "trial_list": trial_list_path,
-    "attacker_condition": condition,   # "ignorant" | "lazy_informed" | "semi_informed"
-    "attacker_arch": "ecapa_tdnn",     # default; "ecapa_plda_mix" / "resnet34_lora" reserved for v0.2
-    "anonymizer_config": anonymizer_config_path,  # required iff condition == "semi_informed"
-    "seed": 42,
-})
+```bash
+python3 -m speechbrain_voice_anon.recipes.VP2026.attacker.run \
+  --anonymized_path "$ANONYMIZED_PATH" \
+  --enrollment_path "$ENROLLMENT_PATH" \
+  --trial_list "$TRIAL_LIST_PATH" \
+  --attacker_condition "$CONDITION" \
+  --output_format json \
+  --seed 42
 ```
 
-If condition is `semi_informed`, the MCP tool does the full pipeline: anonymize train-clean-360 → retrain ECAPA-TDNN on it → score trials. Stream progress to stderr every 30s.
+Capture stdout as `ATTACKER_JSON`. The command streams progress to stderr every 30 seconds — relay those lines to the user verbatim so the session does not appear hung.
 
-If `result.ok` is `False`:
-- `ATTACKER_TRAINING_FAILED` → suggest a different `seed`, lower learning rate in `attacker.yaml`, or running `lazy_informed` first as a sanity check
-- `MODEL_DOWNLOAD_FAILED` → tell user to `huggingface-cli login`
-- `DATA_MISSING` → standard hint to fetch VP2026 trial lists from the official challenge process
-- `GPU_OOM` → reduce `attacker_batch_size` in attacker.yaml; semi-informed ECAPA training typically needs ≥24GB VRAM at default batch
+**If the command exits non-zero, diagnose from stderr:**
+
+- `ATTACKER_TRAINING_FAILED` — suggest a different `--seed`, lower learning rate in `attacker.yaml`, or running `ignorant` first as a sanity check.
+- `MODEL_DOWNLOAD_FAILED` — tell the user to run `huggingface-cli login` and retry.
+- `DATA_MISSING` — standard hint: fetch VP2026 trial lists from the official challenge process. The enrollment path or trial list path provided may be wrong.
+- `GPU_OOM` — reduce `attacker_batch_size` in attacker.yaml. Semi-informed ECAPA retraining typically needs ≥24 GB VRAM at default batch size.
+- Any other failure — show the stderr tail and ask the user whether to abort or retry with a different condition.
 
 ### Step 4: Present results
+
+Parse `ATTACKER_JSON` and format as:
 
 ```
 VP2026 Attacker Results
 =======================
 System:     <anonymized_path>
-Condition:  semi_informed (official VP2026 ranking attacker)
-Attacker:   ECAPA-TDNN 512ch, retrained on anonymized train-clean-360
+Condition:  <condition> (<"official VP2026 ranking attacker" if semi_informed, else "informational">)
+Attacker:   ECAPA-TDNN 512ch<", retrained on anonymized train-clean-360" if semi_informed>
 Seed:       42
 
 | Metric                    | Female | Male  | Overall |
 |---------------------------|--------|-------|---------|
-| EER % (higher = better)   | 38.2   | 35.7  | 36.9    |
-| Linkability (ZEBRA Cllr)  | 0.41   | 0.43  | 0.42    |
-| min Cllr                  | 0.38   | 0.40  | 0.39    |
+| EER % (higher = better)   | <f>    | <m>   | <o>     |
+| Linkability (ZEBRA Cllr)  | <f>    | <m>   | <o>     |
+| min Cllr                  | <f>    | <m>   | <o>     |
 
 Reference points (informational):
   B1 (McAdams)        EER overall: 34.8
   B2 (neural)         EER overall: 28.1
   Random chance       EER overall: 50.0
 
-Verdict: privacy delta vs B2 = +8.8 EER (your system is harder to attack)
+Verdict: <delta vs B2>
 ```
 
 Color rules (terminal-aware):
-- **Green:** EER higher than B2 (you beat the stronger baseline)
-- **Yellow:** EER between B1 and B2
-- **Red:** EER below B1 (regression on privacy — your "anonymization" is making things WORSE than the simplest baseline)
+- **Green:** EER higher than B2 overall (you beat the stronger baseline — good privacy)
+- **Yellow:** EER between B1 and B2 (better than classical, weaker than neural baseline)
+- **Red:** EER below B1 (regression — your system is making re-identification *easier* than the simplest baseline)
+
+If "all three" was selected, print a condensed comparison table across all three conditions showing overall EER and Cllr side-by-side.
 
 ### Step 5: Log experiment
 
-```python
-mcp_client.call("vp_log_experiment", {
-    "exp_id": f"attack-{condition}-{timestamp}",
-    "metrics": {"attacker": result, "condition": condition},
-    "config_hash": result["config_hash"],
-})
+Compute:
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(pwd)")
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+EXP_ID="attack-${CONDITION}-${TIMESTAMP}"
+mkdir -p ~/.vpstack/projects/$SLUG/experiments/$EXP_ID
 ```
 
-Writes to `~/.vpstack/projects/{slug}/experiments/{id}/` for retrieval by `/vp-search-experiments` and `/vp-writeup`.
+Use the Write tool to create `~/.vpstack/projects/$SLUG/experiments/$EXP_ID/summary.json`:
+
+```json
+{
+  "exp_id": "<EXP_ID>",
+  "skill": "vp-attack",
+  "timestamp": "<ISO 8601>",
+  "condition": "<condition>",
+  "anonymized_path": "<anonymized_path>",
+  "seed": 42,
+  "metrics": <ATTACKER_JSON parsed object>
+}
+```
+
+This file is retrievable by `/vp-search-experiments` and `/vp-writeup`.
 
 ### Step 6: Suggest next steps
 
 Based on results:
 
-- If EER drops below B1: regression — suggest `/vp-spike` to ablate which component of your system is leaking speaker identity.
-- If condition was `lazy_informed` only: suggest a follow-up `/vp-attack --condition semi_informed` for the official ranking number.
-- If EER above B2 and submission-ready: suggest `/vp-eval --official` for the full scorecard (WER + side-channels + all attacker conditions).
-- If user wants robustness numbers for a paper rebuttal: suggest running all three conditions and reporting the gap between `ignorant` and `semi_informed` (this is what reviewers ask in every Interspeech rebuttal).
+- If EER drops below B1: regression — suggest `/vp-spike` to ablate which component is leaking speaker identity.
+- If condition was `lazy_informed` only: suggest a follow-up `/vp-attack` with `semi_informed` for the official ranking number.
+- If EER is above B2 and the user is submission-ready: suggest `/vp-eval --official` for the full scorecard (WER + side-channels + all attacker conditions).
+- If the user wants robustness numbers for a paper rebuttal: suggest running all three conditions and reporting the gap between `ignorant` and `semi_informed` — this is the question reviewers ask in every Interspeech rebuttal.
 
 ## Telemetry (run last)
 
@@ -159,18 +194,18 @@ TEL_DUR=$(( TEL_END - TEL_START ))
   --outcome "$OUTCOME"
 ```
 
-`OUTCOME`: `success` | `error` | `abort`. On error, include `--error-class` from allowlist: `GPU_OOM`, `DATA_MISSING`, `MCP_UNREACHABLE`, `INVALID_CONFIG`, `TIMEOUT`, `ATTACKER_TRAINING_FAILED`, `MODEL_DOWNLOAD_FAILED`, `ATTACKER_DATA_MISMATCH`.
+`OUTCOME`: `success` | `error` | `abort`. On error, include `--error-class` from allowlist: `GPU_OOM`, `DATA_MISSING`, `INVALID_CONFIG`, `TIMEOUT`, `ATTACKER_TRAINING_FAILED`, `MODEL_DOWNLOAD_FAILED`, `ATTACKER_DATA_MISMATCH`.
 
 ## Completion status
 
 - DONE — attacker ran for the requested condition(s), per-gender EER and linkability reported, experiment logged
 - DONE_WITH_CONCERNS — attacker ran but one of multiple requested conditions failed (note which)
-- BLOCKED — MCP unreachable, GPU OOM, VP2026 data missing, or anonymizer_config invalid for semi_informed
+- BLOCKED — GPU OOM, VP2026 data missing, or anonymized path invalid
 
 ## Notes for skill authors
 
-This is a **long-running** skill (semi-informed easily 8+ hours). The MCP layer must stream progress every 30 seconds. The skill should print an explicit time estimate before kicking off any condition that takes more than 15 minutes — never let the user think it's hung. The `all` mode prints a per-condition ETA up front so users can decide whether to go grab lunch or just coffee.
+This is a **long-running** skill (semi-informed easily 8+ hours). The bash command streams progress to stderr every 30 seconds — Claude must relay those lines so the user never thinks the session is hung. Before kicking off any condition that takes more than 15 minutes, print an explicit time estimate. The "all three" mode prints a per-condition ETA up front so users can decide whether to grab lunch or just coffee.
 
 ## Why this skill exists
 
-Voice anonymization is *defined* by adversarial threat model. A defense without an attacker run is unfalsifiable. The official VP2026 evaluation runs one attacker (semi-informed); but real research work — paper rebuttals, ablation studies, "is this gain real or a confound?" — needs the full attacker matrix. This skill standardizes that loop and lets researchers iterate against an attacker dozens of times before they're ready for a full `/vp-eval`.
+Voice anonymization is *defined* by an adversarial threat model. A defense without an attacker run is unfalsifiable. The official VP2026 evaluation runs one attacker (semi-informed); but real research — paper rebuttals, ablation studies, "is this gain real or a confound?" — needs the full attacker matrix. This skill standardizes that loop and lets researchers iterate against an attacker dozens of times before they are ready for a full `/vp-eval`.

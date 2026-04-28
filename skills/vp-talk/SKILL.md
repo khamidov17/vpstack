@@ -112,13 +112,7 @@ Each via AskUserQuestion, **one at a time**. After a weak answer, ask the docume
 
 ### Step 2: Component info lookup (optional)
 
-If user named a specific component (OHNN, ECAPA-farthest, HuBERT layer X), call:
-
-```python
-info = mcp_client.call("vp_get_component_info", {"component_name": user_component})
-```
-
-Surface tradeoffs in the plan doc.
+If the user named a specific component (HuBERT layer X, ECAPA-farthest, HiFi-GAN, McAdams), apply inline domain knowledge from your context. See `docs/domain.md` for the canonical component tradeoff reference. Surface the relevant tradeoffs in the plan doc without any tool call.
 
 ### Step 3: Write the research plan
 

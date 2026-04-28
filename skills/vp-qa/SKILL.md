@@ -81,26 +81,31 @@ If FAIL → **P0**, surface and stop. Non-reproducible work shouldn't be QA'd fu
 
 #### 3c. Submission format validation (if applicable)
 
-If the user passed an `exp/` directory (suggesting a submission tree), call `vp_check_submission`:
+If the user passed an `exp/` directory (suggesting a submission tree), validate it with bash:
 
-```python
-result = mcp_client.call("vp_check_submission", {"submission_path": exp_dir})
+```bash
+# VP2026 submission directory structure check
+ls "$exp_dir"/eer.json 2>/dev/null || echo "MISSING: eer.json"
+ls "$exp_dir"/wer.json 2>/dev/null || echo "MISSING: wer.json"
+ls "$exp_dir"/anonymized/ 2>/dev/null || echo "MISSING: anonymized/ directory"
+python3 -c "import json; d=json.load(open('$exp_dir/eer.json')); assert 'overall' in d, 'MISSING: eer.json[overall]'" 2>&1
+find "$exp_dir" -name "*.wav" -maxdepth 4 | wc -l
 ```
 
-If `result.error.code == "MALFORMED_SUBMISSION"` → **P1** unless the user explicitly said "pre-submission" (Tier C), in which case **P0**.
+If any MISSING lines appear → **P1** unless user said "pre-submission" (Tier C), in which case **P0**.
 
 #### 3d. Lazy-informed attacker smoke (Tier A+)
 
 Always run this even in Quick mode — it's the fastest privacy sanity check.
 
-```python
-result = mcp_client.call("vp_run_attacker", {
-    "anonymized_path": ...,
-    "enrollment_path": ...,
-    "trial_list": ...,
-    "attacker_condition": "lazy_informed",
-    "seed": 42,
-})
+```bash
+python3 -m speechbrain_voice_anon.recipes.VP2026.attacker.run \
+  --anonymized_path "$ANONYMIZED_PATH" \
+  --enrollment_path "$ENROLLMENT_PATH" \
+  --trial_list "$TRIAL_LIST" \
+  --attacker_condition lazy_informed \
+  --output_format json \
+  --seed 42
 ```
 
 Compare `eer_overall` against:

@@ -65,80 +65,133 @@ echo "$PROJECT_HASH" >> ~/.vpstack/projects-decided
 
 ## Workflow
 
-### Step 1: Locate the user's system
+### Step 1: Resolve the slug and timestamps
+
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+TEL_START=$(date +%s)
+EXP_ID="baseline-compare-$(date +%Y%m%dT%H%M%S)"
+```
+
+### Step 2: Locate the user's system
 
 Ask via AskUserQuestion:
 
 > "Which anonymization system should I compare against B1 and B2?"
 >
 > A) Path to a directory with my anonymized audio (already-run system)
-> B) Path to a SpeechBrain-style config that I want vpstack to run for me
-> C) Just run B1 and B2 — no comparison, I want canonical numbers
+> B) Just run B1 — no user system comparison, I want canonical numbers
 
-If A: ask for the path. Validate it exists and contains `.wav` files.
-If B: ask for the config path. Validate it's a YAML and references known components.
-If C: skip Step 2.
+If A: ask for the path. Validate it exists and contains `.wav` files with:
+```bash
+ls "$USER_PATH"/*.wav 2>/dev/null | head -5
+```
+If no `.wav` files are found, report the error and stop.
 
-### Step 2: Run the user's system (if applicable)
+If B: skip Step 3.
 
-If user picked B in Step 1, call MCP tool `vp_run_eval` on their config. Stream progress to stderr every 30s (long-running tool contract).
+### Step 3: Collect user system metrics (if applicable)
 
-```python
-result = mcp_client.call("vp_run_eval", {
-    "system_path": user_config_path,
-    "eval_set": "dev",
-    "seed": 42,
-})
+If the user provided a pre-anonymized audio directory, note it for the comparison table. vpstack does not run a separate eval pipeline for arbitrary user systems in this version — the user should provide EER/WER values directly, or run their own eval script first.
+
+Ask via AskUserQuestion:
+
+> "Do you have EER and WER values for your system already, or should I just show the baseline numbers?"
+>
+> A) I have values — I'll paste them  B) Just show the baseline numbers
+
+If A: ask the user to provide EER (%) and WER (%) for their system. Record them as `user_eer` and `user_wer`.
+
+### Step 4: Run B1 baseline
+
+Inform the user: "Running B1 (McAdams) baseline. This takes ~5 minutes on CPU. B2 is not yet implemented in this version of vpstack — see note below."
+
+```bash
+python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.run \
+  --data_path "$DATA_PATH" \
+  --output_format json \
+  --seed 42
 ```
 
-If `result.ok` is `False`, report the error to user with hint and stop.
+- Exit 0: anonymization succeeded. Parse stdout JSON: `{config_hash, n_files_anonymized, output_dir}`.
+- Exit 2: `BASELINE_NOT_IMPLEMENTED` — the anonymization ran but the eval pipeline is not yet implemented. Parse the JSON error from stdout, note this to the user, and continue. Record `b1_eer` and `b1_wer` as `"pending"`.
+- Exit 1: real error — read stderr, report to user, set `OUTCOME=error`, and stop.
 
-### Step 3: Run B1 and B2 baselines
+**B2 note:** B2 (neural: HuBERT + ECAPA-TDNN + HiFi-GAN) is not yet implemented. Running it will always exit 2 with `BASELINE_NOT_IMPLEMENTED`. Do not attempt to run B2 in this skill unless the user explicitly requests it as a smoke test. If asked, run:
 
-Call MCP tools in parallel:
-
-```python
-b1 = mcp_client.call("vp_run_baseline", {"baseline": "B1", "data_path": ..., "seed": 42})
-b2 = mcp_client.call("vp_run_baseline", {"baseline": "B2", "data_path": ..., "seed": 42})
+```bash
+python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B2.run \
+  --data_path "$DATA_PATH" \
+  --output_format json \
+  --seed 42
 ```
 
-These can take hours on first run. Inform user up front: "B1 takes ~5min, B2 takes ~45min on a single GPU. Cached on subsequent runs."
+Then report exit 2 to the user clearly: "B2 is not yet implemented — exits with BASELINE_NOT_IMPLEMENTED. Skipping B2 column."
 
-### Step 4: Build the delta table
+### Step 5: Build the delta table
+
+Construct the comparison table from available data. Use `"—"` for any metric that could not be obtained.
 
 ```
-                      B1     B2     yours    Δ vs B1   Δ vs B2
-EER % (↑ = private)  [run]  [run]  11.1     ?         ?
-WER % (↓ = useful)   [run]  [run]   8.0     ?         ?
-Linkability (↓)       [run]  [run]   0.39    ?         ?
+                        B1            B2            Yours
+EER % (↑ = private)    [b1_eer]      not impl.     [user_eer or —]
+WER % (↓ = useful)     [b1_wer]      not impl.     [user_wer or —]
+Linkability (↓)         [b1_link]     not impl.     [user_link or —]
+
+Δ vs B1:  EER [delta_eer]  WER [delta_wer]
 ```
 
-Color rules (if terminal supports):
-- Green: improvement vs B2 (the stronger baseline)
-- Yellow: improvement vs B1 only
-- Red: regression vs both
+Metric direction reminders (always show to user):
+- EER: **higher = more private**. Random-chance ceiling is 50%. A perfect anonymizer would approach 50%.
+- WER: **lower = more useful**. 0% = perfect transcription.
+- Linkability: **lower = harder to link back to original speaker**.
 
-### Step 5: Log experiment
+Color guidance (if terminal supports ANSI):
+- Green: user's system improves over B1 on the primary metric (EER)
+- Yellow: mixed result (EER up but WER also up significantly)
+- Red: regression vs B1
 
-Call MCP tool `vp_log_experiment`:
+### Step 6: Log experiment
 
-```python
-mcp_client.call("vp_log_experiment", {
-    "exp_id": f"baseline-compare-{timestamp}",
-    "metrics": {"yours": yours, "b1": b1, "b2": b2},
-    "config_hash": config_hash,
-})
+Use the Write tool to create the experiment summary. First ensure the directory exists:
+
+```bash
+mkdir -p ~/.vpstack/projects/$SLUG/experiments/$EXP_ID
 ```
 
-This writes to `~/.vpstack/projects/{slug}/experiments/{id}/` for later retrieval by `/vp-search-experiments` and `/vp-writeup`.
+Then use the Write tool to create `~/.vpstack/projects/$SLUG/experiments/$EXP_ID/summary.json` with contents:
 
-### Step 6: Suggest next steps
+```json
+{
+  "exp_id": "<EXP_ID>",
+  "skill": "vp-baseline-compare",
+  "timestamp": "<ISO 8601 timestamp>",
+  "slug": "<SLUG>",
+  "seed": 42,
+  "b1": {
+    "config_hash": "<from B1 stdout or null>",
+    "n_files_anonymized": "<from B1 stdout or null>",
+    "output_dir": "<from B1 stdout or null>",
+    "eer": "<b1_eer or null>",
+    "wer": "<b1_wer or null>"
+  },
+  "b2": null,
+  "user_system": {
+    "eer": "<user_eer or null>",
+    "wer": "<user_wer or null>"
+  },
+  "notes": "<any BASELINE_NOT_IMPLEMENTED notices>"
+}
+```
 
-Based on the results:
+### Step 7: Suggest next steps
 
-- If user's system beats B2 on EER: suggest `/vp-eval` with `--official` to validate against held-out test set.
-- If user's system regresses vs B1: suggest `/vp-spike` to ablate components and find the regression source.
-- If user has no system yet (Step 1 = C): suggest `/vp-hypothesis` to formalize their first ablation.
+Based on results:
+
+- If the user's system EER is higher than B1 EER: "Your system shows stronger privacy than B1. Consider running `/vp-eval` when the full eval pipeline is implemented to validate on the held-out test set."
+- If the user's system EER is lower than B1 EER: "Your system shows weaker privacy than B1. Try `/vp-spike` to ablate components and find what's hurting privacy."
+- If B1 exited with `BASELINE_NOT_IMPLEMENTED` (exit 2): "B1 anonymization ran successfully but the EER/WER scoring pipeline is not yet implemented. Check `output_dir` for anonymized audio. Run your own ASV eval against it."
+- If no user system was provided: "No user system compared. Try `/vp-hypothesis` to formalize your first ablation idea."
 
 ## Telemetry (run last)
 
@@ -151,13 +204,13 @@ TEL_DUR=$(( TEL_END - TEL_START ))
   --outcome "$OUTCOME"
 ```
 
-Where `OUTCOME` is one of: `success`, `error`, `abort`. On `error`, include `--error-class` (allowlist: `GPU_OOM`, `DATA_MISSING`, `MCP_UNREACHABLE`, `INVALID_CONFIG`, `TIMEOUT`).
+Where `OUTCOME` is one of: `success`, `error`, `abort`. On `error`, include `--error-class` (allowlist: `GPU_OOM`, `DATA_MISSING`, `INVALID_CONFIG`, `TIMEOUT`).
 
 ## Completion status
 
 - DONE — table produced, experiment logged
-- DONE_WITH_CONCERNS — table produced but one or more baselines failed (note which)
-- BLOCKED — MCP server unreachable or VP2026 data missing
+- DONE_WITH_CONCERNS — B1 exited 2 (BASELINE_NOT_IMPLEMENTED); anonymization ran but no EER/WER scored
+- BLOCKED — VP2026 data path missing or B1 recipe exited 1 (real error)
 
 ## Notes for skill authors
 
@@ -165,7 +218,7 @@ This is the canonical vpstack skill — every other skill follows the same shape
 1. Preamble with `vpstack-skill-init` (handles activation, version check, telemetry start)
 2. Activation gate (exit silently on NO_MATCH / DISABLED)
 3. First-run gate (AskUserQuestion if DETECTED_FIRST_RUN)
-4. Workflow body (calls MCP tools, presents results)
+4. Workflow body (runs bash commands directly, uses Write tool for state)
 5. Telemetry end (`vpstack-telemetry-log`)
 
 Skills MUST NOT bypass the preamble — that's the privacy and silent-on-non-voice contract.

@@ -10,12 +10,13 @@ description: |
 allowed-tools:
   - Bash
   - Read
+  - Write
   - AskUserQuestion
 ---
 
 # /vp-repro-check
 
-Validate that an experiment can be reproduced. Verifies every input that affects the output: seed, splits, checkpoints, hparams. **Limitation:** does NOT validate vpstack version itself — see DESIGN.md for the rationale.
+Validate that an experiment can be reproduced. Verifies every input that affects the output: seed, splits, checkpoints, hparams, and determinism. **Limitation:** does NOT validate vpstack version itself — see DESIGN.md for the rationale.
 
 ## Preamble (run first)
 
@@ -31,69 +32,174 @@ esac
 if [ -n "$UPGRADE_AVAILABLE" ]; then
   echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
 fi
+
+TEL_START=$(date +%s)
 ```
 
 ## First-run gate
 
-If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion (Yes / No / Ask later) — same shape as in `vp-baseline-compare`.
+If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion:
+
+> "This project looks like voice-anonymization work (matched: $ACTIVATION_REASON). Enable vpstack here?"
+>
+> A) Yes, enable for this project
+> B) No, silence vpstack on this project forever
+> C) Ask me again next time
+
+On A: `mkdir -p .vpstack && touch .vpstack/enabled`, append project hash to `~/.vpstack/projects-decided`, and proceed.
+On B: `mkdir -p .vpstack && touch .vpstack/disabled`, exit silently.
+On C: `mkdir -p .vpstack && touch .vpstack/ask-later` and exit silently. Marker valid for 60min — prevents re-prompt loops in a multi-skill session.
 
 ## Workflow
 
 ### Step 1: Locate the experiment to check
 
-> "Which experiment to check?"
-> A) Most recent in this project
-> B) Search by ID
-> C) Path to a config file
+Ask via AskUserQuestion:
 
-For A or B: load from `~/.vpstack/projects/{slug}/experiments/`.
-For C: just point at the config.
+> "Which experiment configuration should I check for reproducibility?"
+>
+> A) Most recent experiment in this project (from ~/.vpstack/projects/<slug>/experiments/)
+> B) Search by experiment ID
+> C) Path to a specific config file (e.g., train.yaml, hparams.yaml)
 
-### Step 2: Run the check
+For A: run:
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(pwd)")
+ls -t ~/.vpstack/projects/$SLUG/experiments/ | head -1
+```
+Load the `summary.json` from that experiment and extract `config_path`.
 
-```python
-report = mcp_client.call("vp_check_reproducibility", {"config_path": config_path})
+For B: ask for the ID, then resolve to `~/.vpstack/projects/$SLUG/experiments/$EXP_ID/summary.json` and extract `config_path`.
+
+For C: use the path the user provides directly as `CONFIG_PATH`.
+
+If `CONFIG_PATH` does not exist or is not readable, report BLOCKED and exit.
+
+### Step 2: Run the five reproducibility checks
+
+Execute each check as a separate bash command. Collect the output to determine PASS or FAIL per item.
+
+**Check 1 — Seed pinned**
+
+```bash
+grep -E "^seed:" "$CONFIG_PATH" || echo "MISSING: seed"
 ```
 
-Tool checks:
-1. **Seed pinned?** Single integer in config; not absent, not list, not auto-derived from time.
-2. **Dataset splits explicit?** Train/dev/test paths or HF dataset IDs are concrete, not "auto-detect".
-3. **Model checkpoint hashes?** Each pretrained checkpoint has a verified SHA matching the lockfile in the recipe.
-4. **Hparams complete?** Every key referenced by the recipe is present (no defaults silently filling in).
-5. **CUDA determinism?** Either `torch.use_deterministic_algorithms(True)` is set, OR ≥3 seeds are recorded for variance estimation.
+PASS: output is a single line matching `seed: <integer>` (e.g., `seed: 42`).
+FAIL: output is `MISSING: seed`, or the seed value is a range, a list, or the word `null`/`auto`.
+
+**Check 2 — Dataset splits explicit**
+
+```bash
+grep -E "^(data|splits|data_path|train_csv|dev_csv|test_csv):" "$CONFIG_PATH" || echo "MISSING: data/splits section"
+```
+
+PASS: at least one concrete path or HuggingFace dataset ID is present (not `auto`, not empty).
+FAIL: output is `MISSING: data/splits section`, or every matched value is `auto` / blank.
+
+**Check 3 — Model checkpoint hashes**
+
+First, locate the lockfile:
+```bash
+LOCKFILE="$(dirname "$CONFIG_PATH")/checkpoints.lock"
+ls "$LOCKFILE" 2>/dev/null || echo "MISSING: checkpoints.lock"
+```
+
+If `checkpoints.lock` is missing: FAIL on this check, note it, continue.
+
+If present, read the lockfile and for each checkpoint listed:
+```bash
+sha256sum /path/to/checkpoint.pt
+```
+Compare the computed hash against the expected hash in `checkpoints.lock`. Any mismatch = FAIL for this item. Report which checkpoint(s) failed and both hashes.
+
+**Check 4 — Hparams complete (no placeholder values)**
+
+```bash
+grep -E "TODO|FILL_ME|PLACEHOLDER|null|~$" "$CONFIG_PATH" && echo "FAIL: placeholder hparams found" || echo "PASS: no placeholders detected"
+```
+
+PASS: no matches (the `grep` exits non-zero and we fall through to the echo).
+FAIL: any `TODO`, `FILL_ME`, `PLACEHOLDER` token found, or values that are bare `null` or `~` (YAML null).
+
+Additionally, use Read to scan the config and verify that every key referenced in the recipe's `run.py` docstring is present in the config. If there are missing required keys, list them as FAIL items.
+
+**Check 5 — CUDA determinism**
+
+```bash
+grep -E "deterministic|torch_deterministic|use_deterministic_algorithms" "$CONFIG_PATH" || echo "MISSING: determinism"
+```
+
+PASS (strong): a line matching `torch.use_deterministic_algorithms(True)` or `deterministic: true` is present.
+PASS (weak, note it): output is `MISSING: determinism` AND the experiment's summary.json records ≥3 seeds with variance estimates.
+FAIL: determinism is missing and fewer than 3 seeds are recorded.
 
 ### Step 3: Surface result
 
-If `report.status == "PASS"`:
+Collate all five check outcomes and print a structured verdict.
+
+**If all checks pass:**
+
 ```
 Reproducibility check: PASS
 Verified:
-  ✓ seed pinned: 42
-  ✓ splits: explicit (LibriSpeech dev-clean + VP2026 trial list v2026.03.17)
-  ✓ checkpoints: all 3 hash-verified
-  ✓ hparams: 47/47 keys present
-  ✓ determinism: torch.use_deterministic_algorithms(True)
+  ✓ seed pinned: <value>
+  ✓ splits: explicit (<paths or dataset IDs found>)
+  ✓ checkpoints: all <N> hash-verified against checkpoints.lock
+  ✓ hparams: no placeholder values detected, required keys present
+  ✓ determinism: <torch.use_deterministic_algorithms(True) / ≥3 seeds recorded>
 
-Note: vpstack version is not part of the repro contract. Current vpstack: 0.1.0-dev.
-Record this version in your lab notebook.
+Note: vpstack version is not part of the repro contract (see DESIGN.md).
+Current vpstack: 0.1.0-dev. Record this version in your lab notebook.
 ```
 
-If `report.status == "FAIL"`:
+**If any check fails:**
+
 ```
 Reproducibility check: FAIL
 Issues:
-  ✗ seed: missing — config has no `seed` key
-  ✗ checkpoints: hifigan_anon checkpoint hash mismatch (expected sha256:abc..., got sha256:def...)
+  ✗ <check name>: <specific reason>
+  ✗ <check name>: <specific reason>
 
-Other items (passed):
-  ✓ splits, hparams, determinism
+Passed:
+  ✓ <check name>
+  ...
 
 Fix the marked issues and re-run /vp-repro-check.
 ```
 
-### Step 4: Log result
+For checkpoint hash mismatches specifically, show both the expected and actual sha256 so the user knows whether the checkpoint was silently updated upstream or locally modified.
 
-Call `vp_log_experiment` with the repro report metadata. Useful for `/vp-search-experiments` to filter "reproducible only".
+### Step 4: Log repro result
+
+Compute:
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(pwd)")
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+REPRO_ID="repro-check-${TIMESTAMP}"
+mkdir -p ~/.vpstack/projects/$SLUG/experiments/$REPRO_ID
+```
+
+Use the Write tool to create `~/.vpstack/projects/$SLUG/experiments/$REPRO_ID/summary.json`:
+
+```json
+{
+  "exp_id": "<REPRO_ID>",
+  "skill": "vp-repro-check",
+  "timestamp": "<ISO 8601>",
+  "config_path": "<CONFIG_PATH>",
+  "verdict": "PASS" | "FAIL",
+  "checks": {
+    "seed": "<PASS|FAIL>: <detail>",
+    "splits": "<PASS|FAIL>: <detail>",
+    "checkpoints": "<PASS|FAIL>: <detail>",
+    "hparams": "<PASS|FAIL>: <detail>",
+    "determinism": "<PASS|FAIL|PASS_WEAK>: <detail>"
+  }
+}
+```
+
+This metadata is used by `/vp-search-experiments` to filter "reproducible-only" results.
 
 ## Telemetry (run last)
 
@@ -103,9 +209,9 @@ TEL_DUR=$(( TEL_END - TEL_START ))
 ~/.claude/skills/vpstack/bin/vpstack-telemetry-log --skill vp-repro-check --duration "$TEL_DUR" --outcome "$OUTCOME"
 ```
 
-`OUTCOME`: `success` regardless of PASS/FAIL verdict (the check ran). `error` if config unreadable.
+`OUTCOME`: `success` regardless of PASS/FAIL verdict (the check itself ran). `error` if config was unreadable. `abort` if user cancelled.
 
 ## Completion status
 
-- DONE — check ran, verdict shown (PASS or FAIL with reasons)
-- BLOCKED — config file missing or unreadable
+- DONE — check ran, verdict shown (PASS or FAIL with per-check reasons), result logged
+- BLOCKED — config file missing, unreadable, or experiment ID not found
