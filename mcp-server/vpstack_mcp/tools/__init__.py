@@ -9,12 +9,17 @@ from vpstack_mcp.tools import (
     run_attacker,
     check_submission,
     check_reproducibility,
+    check_audio_health,
+    estimate_compute,
     get_component_info,
     search_experiments,
     log_experiment,
     get_context,
     get_leaderboard,
     log_learning,
+    anonymize_custom_data,
+    generate_trial_file,
+    export_results,
 )
 
 __all__ = [
@@ -23,10 +28,15 @@ __all__ = [
     "run_attacker",
     "check_submission",
     "check_reproducibility",
+    "check_audio_health",
+    "estimate_compute",
     "get_component_info",
     "search_experiments",
     "log_experiment",
     "get_context",
     "get_leaderboard",
     "log_learning",
+    "anonymize_custom_data",
+    "generate_trial_file",
+    "export_results",
 ]

@@ -1,6 +1,6 @@
 """vpstack-mcp stdio server.
 
-Exposes 11 VP2026 voice-privacy tools to any MCP-aware AI agent (Claude Code,
+Exposes 16 VP2026 voice-privacy tools to any MCP-aware AI agent (Claude Code,
 Claude Desktop, Codex, Cursor, Cline). Uses stdio transport — local subprocess,
 no port management, no FastAPI process.
 
@@ -39,6 +39,11 @@ from vpstack_mcp.tools import (
     get_context,
     get_leaderboard,
     log_learning,
+    check_audio_health,
+    estimate_compute,
+    anonymize_custom_data,
+    generate_trial_file,
+    export_results,
 )
 
 
@@ -309,6 +314,127 @@ _TOOLS: dict[str, dict[str, Any]] = {
                 "type": {"type": "string", "enum": ["pitfall", "pattern", "preference", "architecture", "component", "data"]},
                 "component": {"type": "string", "description": "Filter to a specific component."},
                 "limit": {"type": "integer", "default": 20},
+            },
+        },
+    },
+    "vp_check_audio_health": {
+        "handler": check_audio_health.handle,
+        "description": (
+            "Pre-flight quality check on a directory of WAV files before running expensive GPU pipelines. "
+            "Detects: sample rate mismatches (silent wrong results), clipping, mostly-silence utterances, "
+            "stereo files (need downmixing), too-short or too-long files. "
+            "Returns PASS / WARN / FAIL verdict with per-file issue list and aggregate stats. "
+            "Run this before vp_run_baseline, vp_run_attacker, or vp_anonymize_custom_data."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "audio_path": {"type": "string", "description": "Directory of WAV files to check."},
+                "expected_sr": {"type": "integer", "default": 16000, "description": "Expected sample rate. VP2026 uses 16000 Hz."},
+                "max_files_to_scan": {"type": "integer", "default": 100, "description": "Cap on files to inspect (for large directories)."},
+            },
+            "required": ["audio_path"],
+        },
+    },
+    "vp_estimate_compute": {
+        "handler": estimate_compute.handle,
+        "description": (
+            "Given a dataset size and anonymization method, estimate GPU hours, VRAM, disk space, "
+            "wall-clock time, and rough cloud cost. Use before starting a large experiment to plan "
+            "infrastructure (cloud GPU rental, storage allocation). "
+            "All estimates are rough — benchmark on a small sample first."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "total_hours_audio": {"type": "number", "description": "Total audio hours to process."},
+                "num_speakers": {"type": "integer", "description": "Number of unique speakers."},
+                "method": {"type": "string", "enum": ["B1", "B2", "custom_neural"], "default": "B2"},
+                "task": {
+                    "type": "string",
+                    "enum": ["anonymize", "attacker_ignorant", "attacker_lazy_informed", "attacker_semi_informed", "full_eval"],
+                    "default": "anonymize",
+                },
+                "gpu_type": {
+                    "type": "string",
+                    "enum": ["V100", "A100", "A10G", "RTX3090", "RTX4090", "CPU"],
+                    "default": "A100",
+                },
+            },
+            "required": ["total_hours_audio", "num_speakers"],
+        },
+    },
+    "vp_anonymize_custom_data": {
+        "handler": anonymize_custom_data.handle,
+        "description": (
+            "Anonymize any directory of WAV files using B1 (McAdams) — not just VP2026-format Kaldi data. "
+            "Accepts any layout (nested subdirectories, arbitrary filenames). "
+            "Preserves directory structure in output. Handles stereo by downmixing. "
+            "Processes files individually so one corrupt file doesn't abort the batch. "
+            "For medical speech, call-center audio, podcasts, or any non-benchmark use case. "
+            "B2 neural method returns BASELINE_NOT_IMPLEMENTED (tracked for v0.2)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input_path": {"type": "string", "description": "Input directory containing WAV files."},
+                "output_path": {"type": "string", "description": "Output directory. Must not be inside input_path."},
+                "method": {"type": "string", "enum": ["B1", "B2"], "default": "B1"},
+                "alpha": {"type": "number", "default": 0.8, "description": "McAdams coefficient (B1 only). VP2026 canonical: 0.8."},
+                "seed": {"type": "integer", "default": 42},
+                "preserve_structure": {"type": "boolean", "default": True, "description": "Preserve input directory tree in output."},
+                "overwrite": {"type": "boolean", "default": False, "description": "Overwrite existing output files."},
+            },
+            "required": ["input_path", "output_path"],
+        },
+    },
+    "vp_generate_trial_file": {
+        "handler": generate_trial_file.handle,
+        "description": (
+            "Generate a Kaldi-style speaker verification trial file from a directory of WAV files. "
+            "Required for running vp_run_attacker on non-VP2026 custom datasets. "
+            "Infers speaker IDs from subdirectory names or filename prefixes. "
+            "Splits utterances into enrollment and trial sets, generates target (same-speaker) "
+            "and nontarget (cross-speaker) pairs. Fully reproducible given the same seed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "audio_dir": {"type": "string", "description": "Directory with WAV files, organized by speaker."},
+                "output_path": {"type": "string", "description": "Where to write the trial file."},
+                "speaker_id_source": {"type": "string", "enum": ["subdirectory", "filename_prefix"], "default": "subdirectory"},
+                "n_target_pairs_per_speaker": {"type": "integer", "default": 5},
+                "n_nontarget_pairs_per_speaker": {"type": "integer", "default": 5},
+                "seed": {"type": "integer", "default": 42},
+                "enrollment_fraction": {"type": "number", "default": 0.3},
+                "min_utterances_per_speaker": {"type": "integer", "default": 2},
+            },
+            "required": ["audio_dir", "output_path"],
+        },
+    },
+    "vp_export_results": {
+        "handler": export_results.handle,
+        "description": (
+            "Export logged experiments as a publication-ready LaTeX table or CSV. "
+            "LaTeX output uses booktabs style (\\toprule/\\midrule/\\bottomrule), "
+            "bolds best value per metric column, and is formatted for ACL/Interspeech/ICASSP. "
+            "Replaces Claude reading N individual summary.json files and hand-formatting a table. "
+            "Include exp_ids to export specific experiments, or omit for all (newest first)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["latex", "csv"], "default": "latex"},
+                "exp_ids": {"type": "array", "items": {"type": "string"}, "description": "Specific experiment IDs. Default: all."},
+                "columns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Columns to include. Available: id, date, method, hypothesis, config_hash, tags, eer, wer, linkability.",
+                },
+                "sort_by": {"type": "string", "enum": ["eer", "wer", "linkability", "date", "id"], "default": "eer"},
+                "limit": {"type": "integer", "default": 30},
+                "caption": {"type": "string", "default": "Voice anonymization results on VP2026 dev set (semi-informed attacker)."},
+                "label": {"type": "string", "default": "results"},
             },
         },
     },

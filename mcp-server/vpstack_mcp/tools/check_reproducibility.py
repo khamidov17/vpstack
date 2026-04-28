@@ -57,20 +57,68 @@ def handle(config_path: str) -> ToolResult:
         else:
             passed.append(f"splits explicit ({len(splits)} entries)")
 
-    # 3. Checkpoint hashes (recipe-specific — checked against a lockfile if present)
-    # CAUTION: v0.1 only verifies that the lockfile EXISTS alongside the config.
-    # It does NOT yet compare declared hashes against lockfile values. A stale or
-    # hand-edited lockfile will still PASS this check. Track: vpstack issue #checkpoint-verify.
+    # 3. Checkpoint hashes — verified against checkpoints.lock (implemented in v0.1.1).
+    # Lock file format (YAML):
+    #   {checkpoint_name}: sha256:{hex}
+    # Config format:
+    #   checkpoints:
+    #     {checkpoint_name}: sha256:{hex}  # or a HF model ID like "facebook/hubert-base-ls960"
     checkpoints = cfg.get("checkpoints") or {}
     lockfile = p.parent / "checkpoints.lock"
     if checkpoints:
         if not lockfile.exists():
-            issues.append("checkpoints listed but no checkpoints.lock alongside config")
-        else:
-            passed.append(
-                f"checkpoints declared ({len(checkpoints)} entries) — lockfile present "
-                f"(WARNING: hash values NOT verified in v0.1; verify manually or wait for v0.2)"
+            issues.append(
+                "checkpoints listed in config but no checkpoints.lock alongside it. "
+                "Create checkpoints.lock with sha256 hashes for each model checkpoint. "
+                "Run: sha256sum /path/to/checkpoint.pt  to get the hash."
             )
+        else:
+            try:
+                import yaml as _yaml
+                with open(lockfile) as f:
+                    lock_data = _yaml.safe_load(f) or {}
+            except Exception as e:
+                issues.append(f"checkpoints.lock is not valid YAML: {e}")
+                lock_data = {}
+
+            hash_mismatches = []
+            hash_missing_in_lock = []
+            hash_verified = []
+
+            for name, declared in checkpoints.items():
+                locked = lock_data.get(name)
+                if locked is None:
+                    hash_missing_in_lock.append(name)
+                    continue
+                # Only compare if both are sha256: prefixed strings — otherwise it's a HF model ID
+                d_str = str(declared).strip()
+                l_str = str(locked).strip()
+                if d_str.startswith("sha256:") and l_str.startswith("sha256:"):
+                    if d_str != l_str:
+                        hash_mismatches.append(
+                            f"{name}: config={d_str[:20]}... lock={l_str[:20]}..."
+                        )
+                    else:
+                        hash_verified.append(name)
+                else:
+                    # HF model ID or non-hash reference — record as checked (can't hash-verify)
+                    hash_verified.append(f"{name} (HuggingFace ID, not hash-pinned)")
+
+            if hash_mismatches:
+                issues.append(
+                    f"checkpoint hash mismatch ({len(hash_mismatches)} of {len(checkpoints)}): "
+                    + "; ".join(hash_mismatches)
+                )
+            if hash_missing_in_lock:
+                issues.append(
+                    f"checkpoints declared in config but missing from lockfile: {hash_missing_in_lock}. "
+                    "Add sha256 hashes to checkpoints.lock."
+                )
+            if hash_verified and not hash_mismatches and not hash_missing_in_lock:
+                passed.append(
+                    f"checkpoints hash-verified ({len(hash_verified)} of {len(checkpoints)}): "
+                    + ", ".join(hash_verified[:3]) + ("..." if len(hash_verified) > 3 else "")
+                )
 
     # 4. Hparams complete? Recipe-specific. v0.1 just checks that no values are obvious placeholders.
     hparams = cfg.get("hparams") or {}

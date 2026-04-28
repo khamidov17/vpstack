@@ -51,25 +51,48 @@ class TestSeedCheck:
 
 
 class TestCheckpointHashes:
-    def test_lockfile_present_warns_not_verified(self, tmp_path):
-        """Regression: lockfile presence must NOT be a silent clean PASS.
+    def test_matching_hashes_pass(self, tmp_path):
+        """Hashes that match between config and lockfile should PASS."""
+        from vpstack_mcp.tools.check_reproducibility import handle
+        cfg = _write_config(
+            tmp_path,
+            "seed: 42\ndata:\n  train: /d\ndeterministic: true\n"
+            "checkpoints:\n  hubert: sha256:abc123\n",
+        )
+        _write_lockfile(tmp_path, "hubert: sha256:abc123\n")  # matching hash
+        r = handle(cfg)
+        passed_msgs = " ".join(r["result"]["passed"])
+        assert "hash-verified" in passed_msgs or "hubert" in passed_msgs
 
-        The audit found that v0.1 reported 'checkpoints declared + lockfile present'
-        as a fully passing check without actually comparing any hashes. The message
-        must now include 'NOT verified' so researchers know the caveat.
+    def test_mismatched_hash_fails(self, tmp_path):
+        """Regression: hash mismatch between config and lockfile must produce FAIL.
+
+        The audit found v0.1 reported PASS without comparing hashes.
+        v0.1.1 implements actual comparison — mismatched hashes must fail.
         """
         from vpstack_mcp.tools.check_reproducibility import handle
         cfg = _write_config(
             tmp_path,
-            "seed: 42\ndata:\n  train: /d\ndeterministic: true\ncheckpoints:\n  hubert: sha256:abc\n",
+            "seed: 42\ndata:\n  train: /d\ndeterministic: true\n"
+            "checkpoints:\n  hubert: sha256:correct_hash\n",
         )
-        _write_lockfile(tmp_path)
+        _write_lockfile(tmp_path, "hubert: sha256:stale_wrong_hash\n")  # mismatch
         r = handle(cfg)
-        passed_msgs = " ".join(r["result"]["passed"])
-        assert "NOT verified" in passed_msgs, (
-            "Checkpoint check must warn that hashes are NOT verified in v0.1. "
-            "Got: " + passed_msgs
+        assert r["result"]["status"] == "FAIL"
+        assert any("mismatch" in i for i in r["result"]["issues"])
+
+    def test_checkpoint_missing_from_lockfile_fails(self, tmp_path):
+        """Checkpoint declared in config but absent from lockfile must fail."""
+        from vpstack_mcp.tools.check_reproducibility import handle
+        cfg = _write_config(
+            tmp_path,
+            "seed: 42\ndata:\n  train: /d\ndeterministic: true\n"
+            "checkpoints:\n  hubert: sha256:abc\n  hifigan: sha256:def\n",
         )
+        _write_lockfile(tmp_path, "hubert: sha256:abc\n")  # hifigan missing
+        r = handle(cfg)
+        assert r["result"]["status"] == "FAIL"
+        assert any("missing from lockfile" in i or "hifigan" in i for i in r["result"]["issues"])
 
     def test_missing_lockfile_fails(self, tmp_path):
         from vpstack_mcp.tools.check_reproducibility import handle
