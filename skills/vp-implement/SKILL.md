@@ -117,7 +117,7 @@ fi
 Inform the agent of these invariants — re-check before EACH commit:
 
 1. **Atomic commit per logical unit.** One file group + its tests = one commit.
-2. **No placeholder hparams.** YAML values must not equal `TODO`, `FILL_ME`, `null`, or `""`.
+2. **No placeholder hparams (YAML recipes only — skip for B1/argparse-only).** If implementing a YAML-configured recipe (B2, custom neural, attacker), YAML values must not equal `TODO`, `FILL_ME`, `null`, or `""`. B1 (McAdams) uses only argparse — skip this check entirely for B1.
    ```bash
    python -c "import sys, yaml; cfg=yaml.safe_load(open(sys.argv[1])); \
      bad=[k for k,v in (cfg.get('hparams') or {}).items() if v in ('TODO','FILL_ME',None,'')]; \

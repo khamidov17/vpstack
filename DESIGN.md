@@ -22,13 +22,26 @@ vpstack closes that gap with a domain-specific toolkit that auto-activates on vo
 
 ---
 
-## What Makes This Cool
+## v0.2 Architecture (2026-04-29)
 
-1. **Domain knowledge encoded as executable infra, not a wiki.** A researcher types `/vp-baseline-compare` and gets real B1/B2 numbers back, not a hallucinated description.
-2. **Cross-tool by design.** MCP server means Codex, Claude Desktop, Cursor, and any future MCP-aware agent get the same VP2026 superpowers — not just Claude Code.
-3. **Silent on unrelated projects.** A researcher with both VP2026 and an unrelated repo never sees vpstack chatter outside the voice repos. No cognitive tax.
-4. **Self-improving feedback loop.** Opt-in anonymous telemetry tells the maintainer which skills break, which take too long, which never get used — without exposing any code or research data.
-5. **Dogfooded from day one.** The maintainer is an active VP2026 researcher. Every skill is shaped by real research need before any user sees it.
+**The MCP server was deleted in v0.2.** Any reference to vp_run_baseline, vp_run_eval, vp_run_attacker, vp_check_submission, or any other MCP tool below this notice is historical documentation of a design that no longer exists. The v0.2 architecture is:
+
+- **Skills:** 15 SKILL.md files that tell Claude what bash commands to run
+- **State:** Written to `~/.vpstack/projects/{slug}/` via Claude's Write tool directly
+- **Computation:** B1 McAdams script generated to `/tmp/vp_b1_run.py` by Claude on demand; attacker and B2 reference the official VP2026 challenge scripts
+- **No Python code in the repo.** No MCP server. No pip install beyond what the researcher already needs.
+
+This follows the gstack pattern: markdown skills + bash = Claude Code, Codex, Cursor all work identically with zero additional setup.
+
+---
+
+## What Makes This Work
+
+1. **Domain knowledge encoded where Claude reads it.** `docs/domain.md` gives Claude the VP2026 facts (metric directions, component tradeoffs, known pitfalls) so it stops hallucinating baseline numbers.
+2. **Cross-tool by design.** Skills work in Claude Code, Codex (AGENTS.md), and Cursor without any MCP config — just bash.
+3. **Silent on unrelated projects.** Auto-activation fires only on voice-anonymization signals. Completely silent elsewhere.
+4. **Self-improving feedback loop.** Opt-in anonymous telemetry. Never sends code or research data.
+5. **Dogfooded from day one.** Every skill shaped by real VP2026 research need.
 
 ---
 
@@ -36,9 +49,10 @@ vpstack closes that gap with a domain-specific toolkit that auto-activates on vo
 
 1. Audience is small (~100–300 active VP2026 researchers). Optimize for **value per user**, not adoption velocity.
 2. **Correctness > coverage.** A wrong baseline number propagates to citations. The bar is higher than mass-market dev tools, not lower.
-3. Must work without GPU on laptop dev (skills + MCP layer); GPU only for actual recipe execution.
+3. Must work without GPU on laptop dev (skills run via bash); GPU only for actual recipe execution.
 4. Must respect researcher privacy — telemetry never sends code, file paths, hypothesis text, eval numbers, or repo names.
 5. Must auto-activate ONLY on voice-anonymization projects, silent everywhere else.
+6. **VP2026 specifically.** All metric references, baseline specs, and attacker conditions follow the VP2026 Eval Plan PDF. Do not reference VP2022, VP2020, or VP2024 numbers as current targets.
 
 ---
 

@@ -258,8 +258,24 @@ _TEL_DUR=$(( _TEL_END - _TEL_START ))
 - **`/vp-autoplan` integration:** When detected on a voice repo (via `vpstack-detect`), `/vp-autoplan` should call `/vp-plan-eng-review` *instead of* `/plan-eng-review`. The two don't both need to run — this skill calls the generic review internally.
 - **Blocks `/vp-ship`?** Yes for P0 fails. No for P1/P2. Override with `vpstack-config set skip_vp_p0_gates true` (audit-logged + flagged in PR).
 
+## Deferred gate logging
+
+If any gates were deferred (user chose to skip P1 or P2 checks), log them so `/vp-ship` can surface them later:
+
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(pwd)")
+mkdir -p ~/.vpstack/projects/$SLUG
+```
+
+For each deferred gate, use the Write tool to append to `~/.vpstack/projects/$SLUG/deferred-gates.jsonl`:
+```json
+{"gate": "<gate name>", "severity": "P1|P2", "reason": "<why deferred>", "date": "<ISO 8601>", "skill": "vp-plan-eng-review"}
+```
+
+This file is read by `/vp-ship` Step 3.5. Deferred gates are not forgotten — they resurface at ship time.
+
 ## Completion status
 
-- DONE — review complete, verdict CLEARED
-- DONE_WITH_CONCERNS — verdict CLEARED but P1 fails the user opted to defer
+- DONE — review complete, verdict CLEARED, no deferred gates
+- DONE_WITH_CONCERNS — verdict CLEARED but P1/P2 gates deferred (logged to deferred-gates.jsonl)
 - BLOCKED — verdict BLOCKED with N P0 fails outstanding

@@ -139,7 +139,9 @@ Write `/tmp/vp_b1_run.py` using the Write tool with this content, then run it:
 
 ```python
 #!/usr/bin/env python3
-"""McAdams B1 voice anonymization — Patino et al. VP2020.
+"""McAdams B1 voice anonymization — VP2026 B1 baseline.
+Algorithm: Patino et al. VP2020 (the original paper); parameters per VP2026 Eval Plan PDF.
+DO NOT use VP2020/VP2022/VP2024 reference numbers — run this on your VP2026 data to get current baselines.
 Alpha=0.8, frame_length=20ms, hop=10ms, lpc_order=20 (canonical VP2026 settings).
 """
 import argparse, hashlib, json, sys, time

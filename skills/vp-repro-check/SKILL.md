@@ -138,19 +138,44 @@ FAIL: determinism is missing and fewer than 3 seeds are recorded.
 
 Collate all five check outcomes and print a structured verdict.
 
-**If all checks pass:**
+**If all checks pass (with checkpoint hashes verified):**
 
 ```
-Reproducibility check: PASS
+Reproducibility check: PASS_STRONG
 Verified:
   ✓ seed pinned: <value>
   ✓ splits: explicit (<paths or dataset IDs found>)
   ✓ checkpoints: all <N> hash-verified against checkpoints.lock
   ✓ hparams: no placeholder values detected, required keys present
-  ✓ determinism: <torch.use_deterministic_algorithms(True) / ≥3 seeds recorded>
+  ✓ determinism: torch.use_deterministic_algorithms(True)
 
-Note: vpstack version is not part of the repro contract (see DESIGN.md).
-Current vpstack: 0.1.0-dev. Record this version in your lab notebook.
+PASS_STRONG: This experiment should reproduce exactly given the same hardware.
+Note: vpstack version is not part of the repro contract. Record it in your lab notebook.
+```
+
+**If all checks pass but determinism via n_seeds (no torch_deterministic flag):**
+
+```
+Reproducibility check: PASS_WEAK
+Verified:
+  ✓ seed pinned: <value>
+  ✓ splits: explicit
+  ✓ checkpoints: <N> hash-verified
+  ✓ hparams: no placeholders
+  ⚠ determinism: ≥3 seeds recorded (statistical reproduction only — no torch_deterministic flag)
+
+PASS_WEAK means variance was measured, not eliminated. A 4th seed could be an outlier.
+Suitable for exploratory work. For publication, set torch_deterministic: true and rerun.
+```
+
+**If checkpoints.lock is missing:**
+
+```
+Reproducibility check: PASS_WEAK (checkpoint hashes unverified)
+⚠ checkpoints.lock not found — model weights are not hash-pinned.
+  If HuggingFace updates a checkpoint and you re-download, your results change silently.
+  Create checkpoints.lock (format documented in docs/domain.md#checkpoints-lock-format).
+  Generate SHA256: sha256sum /path/to/checkpoint.pt | awk '{print $1}'
 ```
 
 **If any check fails:**

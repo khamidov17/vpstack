@@ -109,6 +109,24 @@ An experiment is reproducible if ALL of the following are true:
 4. **No placeholder hparams** — no `TODO`, `FILL_ME`, `null`, or empty strings in hparams
 5. **Determinism** — either `torch_deterministic: true` OR `n_seeds >= 3` recorded
 
+### checkpoints.lock format
+
+One line per pretrained model checkpoint:
+```
+# component_name  sha256_hex                                                        source_url_or_hf_id
+hubert-base       abc123def456...  facebook/hubert-base-ls960
+ecapa-voxceleb    def789abc012...  speechbrain/spkrec-ecapa-voxceleb
+hifigan-libritts  ghi012def345...  https://example.com/hifigan_libritts.pt
+```
+
+Generate SHA256: `sha256sum /path/to/checkpoint.pt | awk '{print $1}'`
+
+**PASS_STRONG** (reliable reproduction): seed + explicit splits + all checkpoint hashes verified + no placeholders + determinism flag.
+
+**PASS_WEAK** (statistical reproduction): ≥3 seeds run + variance recorded. Does NOT verify checkpoint hashes. Suitable for exploratory work, not for publication. `/vp-repro-check` reports which level of PASS applies.
+
+**Why this matters:** If HuggingFace updates a model checkpoint and you re-download without pinned hashes, your experiment changes silently. PASS_STRONG prevents this. PASS_WEAK does not.
+
 ---
 
 ## VP2026 Submission Format

@@ -79,7 +79,18 @@ If hypothesis files are found, ask:
 
 If A, populate Given/When/Then fields from the hypothesis doc. If B, prompt for them.
 
-### Step 3: Define variants (1-3)
+### Step 3: Eval availability warning
+
+**Before defining variants, tell the user this:**
+
+> "vpstack v0.2 can run B1 anonymization on each variant, but EER/WER/linkability scoring is not yet implemented. Each variant will run the McAdams transformation and report anonymization stats (files processed, output directory), but metric numbers require running the VP2026 eval suite externally (vp-attack for speaker verification, or the official challenge eval scripts). Variants will be marked INCONCLUSIVE for EER/WER until you provide those numbers."
+
+Ask: "Continue setting up variants? (You can still see anonymization output and run /vp-attack separately)"
+A) Yes — proceed  B) No — I'll come back when eval is wired
+
+If B: exit cleanly. Suggest `/vp-attack` or waiting for v0.3.
+
+### Step 4: Define variants (1-3)
 
 Ask via AskUserQuestion:
 

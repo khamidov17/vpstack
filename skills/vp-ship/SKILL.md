@@ -79,6 +79,28 @@ pytest -q --tb=short -m "not gpu" 2>&1 | tail -10
 
 If exit non-zero → **BLOCK SHIP**. Surface the failure; suggest `/vp-investigate` if unclear.
 
+### Step 3.5: Check for deferred plan-eng-review gates
+
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(pwd)")
+DEFERRED_LOG="$HOME/.vpstack/projects/$SLUG/deferred-gates.jsonl"
+if [ -f "$DEFERRED_LOG" ]; then
+  DEFERRED_COUNT=$(wc -l < "$DEFERRED_LOG" | tr -d ' ')
+  if [ "$DEFERRED_COUNT" -gt 0 ]; then
+    echo "WARN: $DEFERRED_COUNT gate(s) were deferred during /vp-plan-eng-review:"
+    tail -"$DEFERRED_COUNT" "$DEFERRED_LOG"
+  fi
+fi
+```
+
+If deferred gates exist, surface them to the user and ask:
+> "You deferred N gate(s) during plan-eng-review (shown above). Ship anyway?"
+> A) Review and resolve them first (recommended)
+> B) Ship anyway — I accept the deferred risk
+
+If A: exit, let user resolve deferred gates, re-run /vp-ship.
+If B: log that user accepted deferred gates, continue.
+
 ### Step 4: VP-specific gate — repro-check (if recipe changed)
 
 Call `/vp-repro-check` on the changed config. Skip if no recipe change.
