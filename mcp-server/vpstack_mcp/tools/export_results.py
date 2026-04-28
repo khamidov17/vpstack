@@ -23,21 +23,9 @@ from typing import Any
 from vpstack_mcp.errors import ToolResult, ok, err
 
 
-def _project_slug() -> str:
-    import hashlib
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        )
-        toplevel = out.decode().strip()
-    except Exception:
-        toplevel = os.getcwd()
-    name = Path(toplevel).name or "unknown"
-    h = hashlib.sha256(toplevel.encode()).hexdigest()[:8]
-    return f"{name}-{h}"
 
+
+from vpstack_mcp._utils import project_slug as _project_slug
 
 def _is_valid(v: Any) -> bool:
     return isinstance(v, (int, float)) and not math.isnan(float(v))
@@ -96,6 +84,31 @@ def _to_csv(rows: list[dict], columns: list[str]) -> str:
                 row.append(_fmt(m.get(col)) if _is_valid(m.get(col)) else m.get(col, ""))
         writer.writerow(row)
     return buf.getvalue()
+
+
+def _latex_escape(text: str) -> str:
+    """Escape special LaTeX characters in user-supplied strings."""
+    replacements = [
+        ("\\", r"\textbackslash{}"),
+        ("&", r"\&"),
+        ("%", r"\%"),
+        ("$", r"\$"),
+        ("#", r"\#"),
+        ("_", r"\_"),
+        ("{", r"\{"),
+        ("}", r"\}"),
+        ("~", r"\textasciitilde{}"),
+        ("^", r"\textasciicircum{}"),
+    ]
+    for char, repl in replacements:
+        text = text.replace(char, repl)
+    return text
+
+
+def _latex_label_safe(label: str) -> str:
+    """Sanitize label to safe LaTeX identifier: [a-zA-Z0-9:-]+"""
+    import re
+    return re.sub(r"[^a-zA-Z0-9:_-]", "-", label)
 
 
 def _to_latex(rows: list[dict], columns: list[str], caption: str, label: str, sort_by: str) -> str:
@@ -172,8 +185,8 @@ def _to_latex(rows: list[dict], columns: list[str], caption: str, label: str, so
     lines += [
         r"    \bottomrule",
         r"  \end{tabular}",
-        f"  \\caption{{{caption}}}",
-        f"  \\label{{tab:{label}}}",
+        f"  \\caption{{{_latex_escape(caption)}}}",
+        f"  \\label{{tab:{_latex_label_safe(label)}}}",
         r"\end{table}",
         "",
         r"% Required packages: \usepackage{booktabs}",

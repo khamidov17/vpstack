@@ -19,22 +19,9 @@ from typing import Any
 from vpstack_mcp.errors import ToolResult, ok
 
 
-def _project_slug() -> str:
-    """Must match log_experiment._project_slug()."""
-    import hashlib
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        )
-        toplevel = out.decode().strip()
-    except Exception:
-        toplevel = os.getcwd()
-    name = Path(toplevel).name or "unknown"
-    h = hashlib.sha256(toplevel.encode()).hexdigest()[:8]
-    return f"{name}-{h}"
 
+
+from vpstack_mcp._utils import project_slug as _project_slug
 
 def _load_experiments(exp_root: Path, limit: int = 20) -> list[dict[str, Any]]:
     """Load the most recent N experiments, newest first."""
@@ -61,7 +48,7 @@ def _load_experiments(exp_root: Path, limit: int = 20) -> list[dict[str, Any]]:
 def _eer_trend(exps: list[dict]) -> str:
     """Describe EER trajectory from oldest to newest (only experiments with EER)."""
     eers = [(e.get("date", ""), e["metrics"].get("eer")) for e in reversed(exps)
-            if isinstance(e.get("metrics", {}).get("eer"), float)]
+            if isinstance(e.get("metrics", {}).get("eer"), (int, float))]
     eers = [(d, v) for d, v in eers if v == v]  # drop NaN
     if len(eers) < 2:
         return "not enough data"
@@ -74,7 +61,7 @@ def _eer_trend(exps: list[dict]) -> str:
 def _best_experiment(exps: list[dict]) -> dict | None:
     """Return the experiment with the highest EER (most private)."""
     valid = [(e, e["metrics"].get("eer", float("-inf")))
-             for e in exps if isinstance(e.get("metrics", {}).get("eer"), float)
+             for e in exps if isinstance(e.get("metrics", {}).get("eer"), (int, float))
              and e["metrics"]["eer"] == e["metrics"]["eer"]]  # drop NaN
     if not valid:
         return None

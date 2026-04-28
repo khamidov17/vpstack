@@ -443,7 +443,7 @@ _TOOLS: dict[str, dict[str, Any]] = {
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
-    """Advertise the 7 vpstack tools to the MCP client."""
+    """Advertise all vpstack tools to the MCP client."""
     return [
         types.Tool(
             name=name,

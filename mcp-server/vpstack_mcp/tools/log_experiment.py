@@ -22,28 +22,9 @@ from vpstack_mcp.errors import ToolResult, ok, err
 _VALID_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 
 
-def _project_slug() -> str:
-    """Project identifier for ~/.vpstack/projects/{slug}/.
 
-    F10 fix from code review: previous version used just basename, so two repos
-    both named `vp2026/` (e.g., ~/work/vp2026 and ~/forks/vp2026) silently merged
-    experiments. Now we suffix with an 8-char hash of the absolute toplevel path,
-    so distinct repos never collide.
-    """
-    try:
-        import subprocess
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        )
-        toplevel = out.decode().strip()
-    except Exception:
-        toplevel = os.getcwd()
-    name = Path(toplevel).name or "unknown"
-    h = hashlib.sha256(toplevel.encode()).hexdigest()[:8]
-    return f"{name}-{h}"
 
+from vpstack_mcp._utils import project_slug as _project_slug
 
 def _atomic_write_json(path: Path, payload: dict) -> None:
     """Write JSON to path atomically. Survives kill -9 mid-write — file is either

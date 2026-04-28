@@ -27,21 +27,9 @@ _VALID_TYPES = frozenset({"pitfall", "pattern", "preference", "architecture", "c
 _VALID_SOURCES = frozenset({"observed", "user-stated", "inferred", "cross-model"})
 
 
-def _project_slug() -> str:
-    import hashlib
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        )
-        toplevel = out.decode().strip()
-    except Exception:
-        toplevel = os.getcwd()
-    name = Path(toplevel).name or "unknown"
-    h = hashlib.sha256(toplevel.encode()).hexdigest()[:8]
-    return f"{name}-{h}"
 
+
+from vpstack_mcp._utils import project_slug as _project_slug
 
 def handle_log(
     key: str,
@@ -100,8 +88,12 @@ def handle_log(
 
     learnings_path = learnings_dir / "learnings.jsonl"
     try:
+        # Append with fsync — a kill-9 mid-write can corrupt the last JSON line,
+        # which would be silently skipped forever by handle_get's JSONDecodeError catch.
         with open(learnings_path, "a") as f:
             f.write(json.dumps(entry) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
     except OSError as e:
         return err("INTERNAL", f"write failed: {e}", "")
 

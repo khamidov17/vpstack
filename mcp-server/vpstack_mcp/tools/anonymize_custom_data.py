@@ -229,6 +229,7 @@ def handle(
     # ------------------------------------------------------------------
     n_processed = 0
     n_skipped = 0
+    n_errors_total = 0  # uncapped; error_list is a capped sample for display
     error_list: list[dict[str, str]] = []
     last_heartbeat = time.monotonic()
 
@@ -294,23 +295,20 @@ def handle(
             else:
                 msg = f"OSError: {e}"
             logger.warning("vp_anonymize_custom_data: %s -> %s", wav, msg)
+            n_errors_total += 1
             if len(error_list) < 10:
                 error_list.append({"file": str(wav), "error": msg})
-            else:
-                # We still count errors beyond the max-10 cap.
-                pass
         except Exception as e:  # noqa: BLE001
             msg = f"{type(e).__name__}: {e}"
             logger.warning("vp_anonymize_custom_data: %s -> %s", wav, msg)
+            n_errors_total += 1
             if len(error_list) < 10:
                 error_list.append({"file": str(wav), "error": msg})
-
-    n_errors = len(error_list) + max(0, len(wav_files) - n_processed - n_skipped - len(error_list))
 
     return ok({
         "n_files_processed": n_processed,
         "n_files_skipped": n_skipped,
-        "n_errors": n_errors,
+        "n_errors": n_errors_total,
         "output_path": str(out),
         "method": "B1",
         "alpha": alpha,

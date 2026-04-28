@@ -74,22 +74,9 @@ _REFERENCE_ROWS = [
 ]
 
 
-def _project_slug() -> str:
-    """Must match log_experiment._project_slug()."""
-    import hashlib
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        )
-        toplevel = out.decode().strip()
-    except Exception:
-        toplevel = os.getcwd()
-    name = Path(toplevel).name or "unknown"
-    h = hashlib.sha256(toplevel.encode()).hexdigest()[:8]
-    return f"{name}-{h}"
 
+
+from vpstack_mcp._utils import project_slug as _project_slug
 
 def _is_valid_float(v: Any) -> bool:
     """Return True if v is a real float (not NaN, not None)."""
@@ -123,8 +110,8 @@ def handle(
             "",
         )
 
-    # Natural sort direction: EER higher=better (desc), WER lower=better (asc)
-    natural_desc = {"eer": True, "linkability": True, "wer": False}
+    # Natural sort direction: EER higher=better (desc), WER lower=better (asc), linkability lower=better (asc)
+    natural_desc = {"eer": True, "linkability": False, "wer": False}
     effective_desc = sort_order == "desc" if sort_order in ("asc", "desc") else natural_desc[sort_by]
 
     slug = _project_slug()
@@ -201,12 +188,18 @@ def handle(
 
     metric_note = {
         "eer": (
-            "Higher EER = more private. 50% = random (perfect anonymization goal). "
-            "B1 semi-informed ≈ 13.5% (weak), B2 semi-informed ≈ 40% (strong). "
-            "Run /vp-baseline-compare on your data for accurate reference values."
+            "Higher EER = more private. 50% = random attacker = perfect anonymization goal. "
+            "Run /vp-baseline-compare on your VP2026 data and log results as 'b1-reference' "
+            "and 'b2-reference' experiments to anchor this leaderboard."
         ),
-        "wer": "Lower WER = better utility. B2 baseline: ~8.1%.",
-        "linkability": "Lower linkability = harder for attacker to link speakers. B2 ≈ 0.42.",
+        "wer": (
+            "Lower WER = better utility. "
+            "Run /vp-baseline-compare on your VP2026 data to get the B1/B2 WER reference for your setup."
+        ),
+        "linkability": (
+            "Lower linkability (ZEBRA Cllr) = harder for attacker to link speaker identities. "
+            "Run /vp-baseline-compare on your VP2026 data to get the B1/B2 linkability reference."
+        ),
     }[sort_by]
 
     return ok({

@@ -107,10 +107,10 @@ These can take hours on first run. Inform user up front: "B1 takes ~5min, B2 tak
 ### Step 4: Build the delta table
 
 ```
-                   B1     B2     yours    Δ vs B1   Δ vs B2
-EER (lower=better) 14.2   12.3   11.1     -3.1      -1.2
-WER (lower=better) 8.4    8.1    8.0      -0.4      -0.1
-Linkability        0.45   0.42   0.39     -0.06     -0.03
+                      B1     B2     yours    Δ vs B1   Δ vs B2
+EER % (↑ = private)  [run]  [run]  11.1     ?         ?
+WER % (↓ = useful)   [run]  [run]   8.0     ?         ?
+Linkability (↓)       [run]  [run]   0.39    ?         ?
 ```
 
 Color rules (if terminal supports):

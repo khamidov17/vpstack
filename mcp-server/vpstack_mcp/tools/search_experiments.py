@@ -13,28 +13,9 @@ from pathlib import Path
 from vpstack_mcp.errors import ToolResult, ok
 
 
-def _project_slug() -> str:
-    """Project identifier for ~/.vpstack/projects/{slug}/.
 
-    Must match log_experiment._project_slug() so search finds what was logged.
-    F10 fix: name + 8-char hash of toplevel path to prevent collision between
-    two repos with the same basename.
-    """
-    import hashlib
-    try:
-        import subprocess
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL,
-            timeout=2,
-        )
-        toplevel = out.decode().strip()
-    except Exception:
-        toplevel = os.getcwd()
-    name = Path(toplevel).name or "unknown"
-    h = hashlib.sha256(toplevel.encode()).hexdigest()[:8]
-    return f"{name}-{h}"
 
+from vpstack_mcp._utils import project_slug as _project_slug
 
 def handle(query: str, limit: int = 10) -> ToolResult:
     """Substring-match query against experiment summaries. Returns matching entries."""
@@ -70,7 +51,7 @@ def handle(query: str, limit: int = 10) -> ToolResult:
         if q_lower in searchable.lower():
             matches.append({
                 "id": summary.get("id", exp_dir.name),
-                "summary": summary.get("summary", "")[:200],
+                "method": summary.get("method", ""),
                 "eer": summary.get("metrics", {}).get("eer"),
                 "wer": summary.get("metrics", {}).get("wer"),
                 "linkability": summary.get("metrics", {}).get("linkability"),
