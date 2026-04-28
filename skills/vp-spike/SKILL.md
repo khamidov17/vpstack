@@ -26,12 +26,38 @@ eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/s
 
 case "$ACTIVATION" in
   NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
-  DETECTED_FIRST_RUN) ;;        # Skill body handles AskUserQuestion below
+  DETECTED_FIRST_RUN) ;;
   ENABLED_EXPLICIT|DETECTED_CONFIRMED) ;;
 esac
 
 if [ -n "$UPGRADE_AVAILABLE" ]; then
   echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
+fi
+
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+TEL_START=$(date +%s)
+
+# Load domain config written by /vp-talk engineering mode
+DOMAIN_CONFIG="$HOME/.vpstack/projects/$SLUG/domain_config.yaml"
+RESAMPLE_REQUIRED=false
+COMPLIANCE=none
+DOMAIN=research
+METHODS=""
+
+if [ -f "$DOMAIN_CONFIG" ]; then
+  DOMAIN=$(grep "^domain:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  SAMPLE_RATE_NATIVE=$(grep "^sample_rate_native:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  RESAMPLE_REQUIRED=$(grep "^resample_required:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  COMPLIANCE=$(grep "^compliance:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  METHODS=$(grep -A5 "^anonymization_methods:" "$DOMAIN_CONFIG" 2>/dev/null | grep "^  -" | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
+  echo "Domain config loaded: domain=$DOMAIN | methods=$METHODS | compliance=$COMPLIANCE"
+
+  if [ "$RESAMPLE_REQUIRED" = "true" ]; then
+    echo "⚠ RESAMPLE REQUIRED: audio is ${SAMPLE_RATE_NATIVE}Hz, B1 needs 16kHz — resample before this spike run"
+    echo "  sox input.wav -r 16000 output.wav"
+  fi
+else
+  echo "No domain config. Run /vp-talk → Engineering mode first to configure your domain."
 fi
 ```
 
@@ -58,11 +84,15 @@ echo "$PROJECT_HASH" >> ~/.vpstack/projects-decided
 
 ## Workflow
 
-### Step 1: Resolve slug and timestamps
+### Step 1: Check preamble output
+
+The preamble already ran SLUG, TEL_START, and domain config loading. Read any warnings:
+
+- If `⚠ RESAMPLE REQUIRED` → **tell the user: resample audio to 16kHz before defining variants**
+- If domain config has `methods` → surface them: "Your domain config says you're using [methods]. This spike will test B1 McAdams as a baseline anchor. For [OHNN/selection/B2], you'll need to bring your own anonymization output."
+- If no domain config → proceed normally, B1 only
 
 ```bash
-SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-TEL_START=$(date +%s)
 EXP_ID="spike-$(date +%Y%m%dT%H%M%S)"
 ```
 

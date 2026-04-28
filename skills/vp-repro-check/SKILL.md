@@ -25,7 +25,7 @@ eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/s
 
 case "$ACTIVATION" in
   NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
-  DETECTED_FIRST_RUN) ;;        # Skill body handles AskUserQuestion below
+  DETECTED_FIRST_RUN) ;;
   ENABLED_EXPLICIT|DETECTED_CONFIRMED) ;;
 esac
 
@@ -33,7 +33,26 @@ if [ -n "$UPGRADE_AVAILABLE" ]; then
   echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
 fi
 
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 TEL_START=$(date +%s)
+
+# Load domain config — checks compliance requirement for telemetry
+DOMAIN_CONFIG="$HOME/.vpstack/projects/$SLUG/domain_config.yaml"
+if [ -f "$DOMAIN_CONFIG" ]; then
+  COMPLIANCE=$(grep "^compliance:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  DOMAIN=$(grep "^domain:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  echo "Domain config: domain=$DOMAIN | compliance=$COMPLIANCE"
+
+  if [ "$COMPLIANCE" = "hipaa" ] || [ "$COMPLIANCE" = "gdpr" ] || [ "$COMPLIANCE" = "both" ]; then
+    CURRENT_TEL=$(~/.claude/skills/vpstack/bin/vpstack-config get telemetry 2>/dev/null || echo "unknown")
+    if [ "$CURRENT_TEL" != "off" ]; then
+      echo "⚠ COMPLIANCE BLOCKER: compliance=$COMPLIANCE requires telemetry=off, but telemetry=$CURRENT_TEL"
+      echo "  Fix before continuing: ~/.claude/skills/vpstack/bin/vpstack-config set telemetry off"
+    else
+      echo "✓ Telemetry off — $COMPLIANCE compliance requirement met"
+    fi
+  fi
+fi
 ```
 
 ## First-run gate

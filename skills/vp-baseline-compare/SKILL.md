@@ -23,22 +23,49 @@ Run the canonical VP2026 baselines and the user's system on the same eval set; r
 ```bash
 eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
 
-# Activation gate
 case "$ACTIVATION" in
-  NO_MATCH|DISABLED_EXPLICIT)
-    exit 0
-    ;;
-  DETECTED_FIRST_RUN)
-    # Skill body handles the AskUserQuestion below
-    ;;
-  ENABLED_EXPLICIT|DETECTED_CONFIRMED)
-    # Proceed normally
-    ;;
+  NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
+  DETECTED_FIRST_RUN) ;;
+  ENABLED_EXPLICIT|DETECTED_CONFIRMED) ;;
 esac
 
-# Surface upgrade if available — do not block
 if [ -n "$UPGRADE_AVAILABLE" ]; then
   echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
+fi
+
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+TEL_START=$(date +%s)
+
+# Load domain config written by /vp-talk engineering mode
+DOMAIN_CONFIG="$HOME/.vpstack/projects/$SLUG/domain_config.yaml"
+RESAMPLE_REQUIRED=false
+COMPLIANCE=none
+DOMAIN=research
+
+if [ -f "$DOMAIN_CONFIG" ]; then
+  DOMAIN=$(grep "^domain:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  SAMPLE_RATE_NATIVE=$(grep "^sample_rate_native:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  RESAMPLE_REQUIRED=$(grep "^resample_required:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  COMPLIANCE=$(grep "^compliance:" "$DOMAIN_CONFIG" 2>/dev/null | awk '{print $2}' | tr -d ' ')
+  echo "Domain config loaded: domain=$DOMAIN | native_sr=${SAMPLE_RATE_NATIVE}Hz | compliance=$COMPLIANCE"
+
+  if [ "$RESAMPLE_REQUIRED" = "true" ]; then
+    echo "⚠ RESAMPLE REQUIRED: audio is ${SAMPLE_RATE_NATIVE}Hz, B1 needs 16kHz."
+    echo "  Resample first: sox input.wav -r 16000 output.wav"
+    echo "  Or batch:       for f in \$DIR/**/*.wav; do sox \"\$f\" -r 16000 \"\${f%.wav}_16k.wav\"; done"
+  fi
+
+  if [ "$COMPLIANCE" = "hipaa" ] || [ "$COMPLIANCE" = "gdpr" ] || [ "$COMPLIANCE" = "both" ]; then
+    CURRENT_TEL=$(~/.claude/skills/vpstack/bin/vpstack-config get telemetry 2>/dev/null || echo "unknown")
+    if [ "$CURRENT_TEL" != "off" ]; then
+      echo "⚠ COMPLIANCE WARNING: compliance=$COMPLIANCE but telemetry is $CURRENT_TEL (not off)"
+      echo "  Fix: ~/.claude/skills/vpstack/bin/vpstack-config set telemetry off"
+    else
+      echo "✓ Telemetry off — compliance=$COMPLIANCE requirement met"
+    fi
+  fi
+else
+  echo "No domain config found. Run /vp-talk → Engineering mode to set up your domain."
 fi
 ```
 
@@ -65,11 +92,15 @@ echo "$PROJECT_HASH" >> ~/.vpstack/projects-decided
 
 ## Workflow
 
-### Step 1: Resolve the slug and timestamps
+### Step 1: Check preamble output and set session vars
+
+The preamble already ran SLUG, TEL_START, and domain config loading. Read any warnings it emitted:
+
+- If `⚠ RESAMPLE REQUIRED` appeared → **stop and ask the user to resample before continuing**
+- If `⚠ COMPLIANCE BLOCKER` appeared → **stop and fix telemetry before running**
+- If domain config loaded → adapt Step 2 question to mention their domain (e.g. "call center audio" instead of generic)
 
 ```bash
-SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-TEL_START=$(date +%s)
 EXP_ID="baseline-compare-$(date +%Y%m%dT%H%M%S)"
 ```
 

@@ -11,23 +11,37 @@ the full domain reference. This file gives you the essentials.
 - ALWAYS report semi-informed attacker EER — it's the official VP2026 ranking metric.
 - DO NOT use VP2020/VP2022/VP2024 numbers. Run baselines on your VP2026 data.
 
+## Start here: domain setup (run once per project)
+
+Run `/vp-talk` → choose Engineering mode. It asks 6 questions and writes:
+`~/.vpstack/projects/{slug}/domain_config.yaml`
+
+Every subsequent skill reads this automatically. Check yours:
+```bash
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(pwd)")
+cat ~/.vpstack/projects/$SLUG/domain_config.yaml
+```
+
 ## Running B1 McAdams baseline
 
-The B1 script lives in skills/vp-baseline-compare/SKILL.md as an inline template.
-Extract it and run:
+The B1 script lives in skills/vp-baseline-compare/SKILL.md Step 4 as an inline template.
+Extract it, write to /tmp/vp_b1_run.py, then:
 
 ```bash
-# Write the script (see vp-baseline-compare/SKILL.md Step 4 for the full template)
+# ⚠ If audio is not 16kHz, resample first:
+# sox input.wav -r 16000 output.wav
+
 python3 /tmp/vp_b1_run.py --data_path /path/to/audio --seed 42
 # pip install soundfile scipy numpy  (if needed)
 ```
 
 ## Running skills in Cursor
 
-Skills (skills/*/SKILL.md) are step-by-step workflows. In Cursor:
-1. Open the relevant SKILL.md in the sidebar
-2. Follow the steps in Composer — run bash commands inline, write files to ~/.vpstack/
-3. Reference docs/domain.md for component tradeoffs and known issues
+Skills (skills/vp-*/SKILL.md) are step-by-step workflows. In Cursor:
+1. Open the relevant SKILL.md in the Composer sidebar
+2. Follow the steps — run bash commands inline, write files to ~/.vpstack/
+3. Domain config (domain_config.yaml) is read automatically by each skill preamble
+4. Reference docs/domain.md for component tradeoffs and known issues
 
 ## Experiment logging
 

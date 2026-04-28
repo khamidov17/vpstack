@@ -40,7 +40,7 @@ python3 /tmp/vp_b1_run.py --data_path /path/to/your/audio --seed 42
 
 ## Running VP2026 skills as Codex
 
-Skills are in `skills/*/SKILL.md`. Each is a step-by-step workflow.
+Skills are in `skills/vp-*/SKILL.md`. Each is a step-by-step workflow.
 To execute a skill as Codex:
 
 1. Read the SKILL.md file
@@ -70,27 +70,72 @@ EOF
 
 ---
 
-## Workflow for a typical VP2026 experiment
+## Workflow for a typical experiment
+
+### Step 0: Set up your domain (run once per project)
+
+Follow `skills/vp-talk/SKILL.md` → Engineering mode. It asks 6 questions and writes:
+`~/.vpstack/projects/{slug}/domain_config.yaml`
+
+This config is automatically read by every subsequent skill.
 
 ```bash
-# 1. Formalize hypothesis (read skills/vp-hypothesis/SKILL.md, follow steps)
-# 2. Run B1 anonymization
+# Check if you have a domain config:
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || python3 -c "import hashlib,os,subprocess; t=subprocess.check_output(['git','rev-parse','--show-toplevel']).decode().strip(); print(f'{os.path.basename(t)}-{hashlib.sha256(t.encode()).hexdigest()[:8]}')")
+cat ~/.vpstack/projects/$SLUG/domain_config.yaml 2>/dev/null || echo "No config — run /vp-talk first"
+```
+
+### Step 1: Formalize hypothesis
+
+Follow `skills/vp-hypothesis/SKILL.md`. Writes to:
+`~/.vpstack/projects/{slug}/hypotheses/{id}.md`
+
+### Step 2: Run B1 anonymization (baseline anchor)
+
+```bash
+# The McAdams B1 script — extract from skills/vp-baseline-compare/SKILL.md Step 4
+# Write it to /tmp/vp_b1_run.py then:
 python3 /tmp/vp_b1_run.py --data_path /path/to/data --seed 42
+# Requires: pip install soundfile scipy numpy
+# ⚠ If your audio is not 16kHz: sox input.wav -r 16000 output.wav
+```
 
-# 3. Run attacker (requires VP2026 challenge attacker script)
-python3 run_attacker.py \
-  --anonymized_path /path/to/anon \
-  --enrollment_path /path/to/enrollment \
-  --trial_list /path/to/trials.txt \
-  --attacker_condition semi_informed \
-  --output_format json --seed 42
+### Step 3: Run your anonymization method (bring your own)
 
-# 4. Reproducibility check (read skills/vp-repro-check/SKILL.md)
-grep -E "^seed: [0-9]+" your_config.yaml || echo "FAIL: seed missing"
-grep -E "^(data|splits):" your_config.yaml || echo "FAIL: no splits"
-grep -E "TODO|FILL_ME" your_config.yaml && echo "FAIL: placeholder hparams"
+```bash
+# OHNN/Selection/B2: use SpeechBrain or your own implementation
+pip install speechbrain
+# Follow your method's recipe
+```
 
-# 5. Log result (write summary.json as above)
+### Step 4: Evaluate (bring your own tools)
+
+```bash
+# EER (speaker verification):
+pip install speechbrain  # use spkrec-ecapa-voxceleb
+
+# WER (transcription quality):
+pip install openai-whisper
+whisper /path/to/anon_audio --model medium --language en
+
+# PMOS/naturalness:
+pip install utmos
+python3 -c "from utmos import UTMOSScore; print(UTMOSScore().score('file.wav'))"
+```
+
+### Step 5: Reproducibility check
+
+Follow `skills/vp-repro-check/SKILL.md` — 5 bash checks, PASS_STRONG or PASS_WEAK.
+
+### Step 6: Log and ship
+
+```bash
+# Log result
+mkdir -p ~/.vpstack/projects/$SLUG/experiments/$EXP_ID
+# Write summary.json via Write tool (see skills/vp-baseline-compare/SKILL.md Step 6)
+
+# Ship
+# Follow skills/vp-ship/SKILL.md
 ```
 
 ---
@@ -98,11 +143,20 @@ grep -E "TODO|FILL_ME" your_config.yaml && echo "FAIL: placeholder hparams"
 ## Project structure
 
 ```
-skills/           15 SKILL.md workflows — follow these step by step
-bin/              Bash scripts (slug, detect, skill-init, telemetry)
-docs/domain.md    Full VP2026 domain reference (metrics, components, known issues)
-docs/claude-md-template.md  Copy into user's project CLAUDE.md
-tests/            Activation + telemetry tests (bash-based)
+skills/vp-*/SKILL.md   15 skill workflows — follow step by step
+bin/                   Bash scripts (vpstack-slug, detect, skill-init, telemetry)
+docs/domain.md         Full VP2026 domain reference (metrics, components, known issues)
+docs/claude-md-template.md  Copy into user's project CLAUDE.md for Claude context
+```
+
+**Runtime state (written during research):**
+```
+~/.vpstack/projects/{slug}/
+  domain_config.yaml      ← written by /vp-talk engineering mode
+  hypotheses/*.md         ← written by /vp-hypothesis
+  experiments/{id}/       ← written by each skill after running
+  research-plans/*.md     ← written by /vp-talk research mode
+  deferred-gates.jsonl    ← written by /vp-plan-eng-review
 ```
 
 ---

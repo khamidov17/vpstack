@@ -19,19 +19,19 @@ vpstack is **voice-privacy research infrastructure for AI coding agents**. It en
 
 ## Architecture in one paragraph
 
-`bin/` is bash scripts (orchestration primitives). `skills/*/SKILL.md` are markdown workflows for Claude Code. `mcp-server/vpstack_mcp/` is the Python MCP server (8 tools, structured error contract). `speechbrain_voice_anon/` is the actual SpeechBrain recipe — re-implemented from VP2024 Eval Plan PDF, NEVER ported from VP2024 GitHub (which is GPLv3 and would force the whole project to GPL). The split: orchestration stays in bash + markdown (gstack pattern), heavy lifting lives in Python because SpeechBrain + PyTorch + HuggingFace Hub do.
+`bin/` is bash scripts (orchestration primitives). `skills/vp-*/SKILL.md` are markdown workflows — Claude reads them and executes bash commands. No MCP server. No Python code in the repo. Skills tell Claude what commands to run; Claude is the intelligence; bash is the execution layer. This is the gstack pattern applied to voice-privacy research. State is written to `~/.vpstack/projects/{slug}/` via the Write tool directly.
 
 ---
 
 ## Non-negotiable rules
 
-1. **Never `import` or vendor anything from `Voice-Privacy-Challenge-2024`** (GPLv3). Re-implement from the published Eval Plan PDF instead. License audit in [LICENSING.md](LICENSING.md).
-2. **Never write code that ships pretrained model weights**. We fetch from HuggingFace Hub at runtime. Never bundle weights into a release artifact.
-3. **Never bundle VP2026 trial lists / VoxCeleb audio / IEMOCAP** in CI fixtures. Use small LibriSpeech-derived clips (CC-BY 4.0).
-4. **Telemetry payload is a strict allowlist.** If you add a new key to the payload, update both the constructor in `bin/vpstack-telemetry-log` AND the test in `tests/telemetry/test_payload_sanitization.py::test_payload_keys_are_strict_allowlist`. The CG3/CG4 tests in `tests/telemetry/` are non-negotiable.
-5. **Every MCP tool returns the structured `ToolResult` contract** from `mcp-server/vpstack_mcp/errors.py`. Never raise unhandled exceptions; catch and return `err(...)` with a code from the `ERROR_CODES` allowlist.
-6. **Never modify CI workflows or existing tests** unless explicitly fixing a bug. New tests go in new files.
-7. **Atomic writes for state files.** Pattern: write-to-tmp → fsync → rename → fsync-parent-dir. See `mcp-server/vpstack_mcp/tools/log_experiment.py::_atomic_write_json`.
+1. **Never `import` or vendor anything from `Voice-Privacy-Challenge-2024`** (GPLv3). Re-implement from the published Eval Plan PDF instead.
+2. **Never write Python code in this repo.** Skills are markdown. `bin/` is bash. No MCP server. No Python packages. Zero code in skills.
+3. **Never bundle pretrained model weights.** Users download at runtime via HuggingFace Hub or SpeechBrain.
+4. **Never bundle VP2026 trial lists / VoxCeleb audio / IEMOCAP.**
+5. **Telemetry payload is a strict allowlist.** Only keys in `bin/vpstack-telemetry-log` are permitted. Never add keys without updating the allowlist.
+6. **VP2026 metrics only.** Do not reference VP2020/VP2022/VP2024 numbers as targets. Run baselines on user's actual VP2026 data.
+7. **domain_config.yaml is written by /vp-talk engineering mode.** Every skill preamble reads it and adapts behavior (sample rate warnings, compliance checks, method context). Never hardcode domain assumptions in skills.
 
 ---
 
@@ -39,12 +39,12 @@ vpstack is **voice-privacy research infrastructure for AI coding agents**. It en
 
 | What | Where | Notes |
 |---|---|---|
-| Bash CLI primitives | `bin/` | All chmod +x. Each script self-documents via `--help`. |
-| Skill workflows | `skills/{name}/SKILL.md` | gstack-style frontmatter (`name`, `version`, `description`, `allowed-tools`). Self-contained preamble — never reference another skill's preamble. |
-| MCP server | `mcp-server/vpstack_mcp/` | Python package. `server.py` registers tools, `tools/*.py` implement them, `errors.py` enforces error contract. |
-| SpeechBrain recipe | `speechbrain_voice_anon/recipes/VP2026/` | One subdir per system: `baseline_B1/` (real), `baseline_B2/` (stub), `attacker/` (stub), `ecapa_farthest/` (stub), `hifigan_anon/` (stub). |
-| Tests | `tests/` | Five subdirs: `activation/`, `telemetry/`, `mcp/`, `recipes/`. Run with `pytest`. |
-| User-level state at runtime | `~/.vpstack/` | `config.json`, `cache/`, `projects/{slug}/` — never in this repo. |
+| Bash CLI primitives | `bin/` | All chmod +x. Each self-documents via `--help`. |
+| Skill workflows | `skills/vp-{name}/SKILL.md` | Markdown. Frontmatter: `name`, `version`, `description`, `allowed-tools`. Self-contained preamble — never reference another skill's preamble. |
+| Domain knowledge | `docs/domain.md` | VP2026 metrics, component tradeoffs, known issues, bash commands. Read by Claude in every session. |
+| User config | `~/.vpstack/config.json` | Managed by `bin/vpstack-config`. |
+| Per-project state | `~/.vpstack/projects/{slug}/` | `domain_config.yaml`, `hypotheses/`, `experiments/`, `research-plans/`, `deferred-gates.jsonl` |
+| Per-project markers | `<repo>/.vpstack/` | `enabled`, `disabled`, `ask-later` — tiny activation markers |
 | Per-project markers | `<repo>/.vpstack/` | Just `enabled` / `disabled` / `ask-later` files. Tiny. |
 
 ---
