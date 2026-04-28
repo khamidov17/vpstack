@@ -116,21 +116,29 @@ grep -E "^(data|splits|data_path|train_csv|dev_csv|test_csv):" "$CONFIG_PATH" ||
 PASS: at least one concrete path or HuggingFace dataset ID is present (not `auto`, not empty).
 FAIL: output is `MISSING: data/splits section`, or every matched value is `auto` / blank.
 
-**Check 3 — Model checkpoint hashes**
+**Check 3 — Model checkpoint hashes (use vpstack-lock)**
 
-First, locate the lockfile:
+Use the `vpstack-lock verify` binary — handles macOS/Linux hash differences and parses the lockfile format consistently:
+
 ```bash
 LOCKFILE="$(dirname "$CONFIG_PATH")/checkpoints.lock"
-ls "$LOCKFILE" 2>/dev/null || echo "MISSING: checkpoints.lock"
+~/.claude/skills/vpstack/bin/vpstack-lock verify "$LOCKFILE"
 ```
 
-If `checkpoints.lock` is missing: FAIL on this check, note it, continue.
+Exit code 0 = all hashes match (PASS_STRONG eligible).
+Exit code non-zero = one or more mismatches or missing files. The output lists each:
+- `OK:      <name>` — hash matches
+- `MISSING: <name>` — file not found
+- `MISMATCH: <name>` — hash differs (shows expected vs actual)
 
-If present, read the lockfile and for each checkpoint listed:
+If `checkpoints.lock` doesn't exist yet, generate one with the user's current checkpoints:
 ```bash
-sha256sum /path/to/checkpoint.pt
+~/.claude/skills/vpstack/bin/vpstack-lock generate /path/to/hubert.pt /path/to/ecapa.pt /path/to/hifigan.pt
 ```
-Compare the computed hash against the expected hash in `checkpoints.lock`. Any mismatch = FAIL for this item. Report which checkpoint(s) failed and both hashes.
+
+This writes `checkpoints.lock` to the current directory. Then re-run verify.
+
+If MISSING or MISMATCH lines appear: FAIL this check. Without hash verification, downstream researchers can't reproduce your numbers exactly — a HuggingFace checkpoint update could silently change results.
 
 **Check 4 — Hparams complete (no placeholder values)**
 

@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+# vpstack-brain (vpbrain) — experiment store CLI for VP2026 research.
+#
+# Mirrors gstack's gbrain pattern: a lightweight CLI over the JSONL files
+# vpstack already writes to ~/.vpstack/projects/{slug}/.
+#
+# Operations:
+#   vpstack-brain list                            # all experiments newest-first
+#   vpstack-brain top --metric eer [--limit 10]   # top N by metric (eer/wer/linkability)
+#   vpstack-brain top --metric wer --order asc    # WER lower-is-better
+#   vpstack-brain show <exp_id>                   # full details for one experiment
+#   vpstack-brain diff <exp_a> <exp_b>            # side-by-side comparison
+#   vpstack-brain query "search text"             # substring search across hypothesis/method/tags
+#   vpstack-brain stats                           # summary: count, best EER, EER trend
+#   vpstack-brain learnings [--query TEXT]        # show research learnings
+#   vpstack-brain timeline [--last 10]            # recent skill activity
+#
+# vpstack-brain reads JSONL files directly. No database. Same data the skills write.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SLUG=$("${SCRIPT_DIR}/vpstack-slug" 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+PROJECT_DIR="$HOME/.vpstack/projects/$SLUG"
+EXP_DIR="$PROJECT_DIR/experiments"
+LEARNINGS="$PROJECT_DIR/learnings.jsonl"
+TIMELINE="$HOME/.vpstack/analytics/timeline.jsonl"
+
+cmd_help() {
+  sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+}
+
+# ----- list -----
+cmd_list() {
+  if [ ! -d "$EXP_DIR" ]; then
+    echo "No experiments yet for project $SLUG"
+    return
+  fi
+  EXP_DIR="$EXP_DIR" python3 - << 'PYEOF'
+import os, json
+from pathlib import Path
+exp_root = Path(os.environ["EXP_DIR"])
+rows = []
+for d in sorted(exp_root.iterdir(), reverse=True):
+    if not d.is_dir(): continue
+    f = d / "summary.json"
+    if not f.exists(): continue
+    try:
+        s = json.load(open(f))
+    except Exception:
+        continue
+    m = s.get("metrics") or {}
+    rows.append({
+        "id": s.get("id", d.name),
+        "date": (s.get("date") or "")[:10],
+        "method": s.get("method", "—"),
+        "eer": m.get("eer"),
+        "wer": m.get("wer"),
+    })
+if not rows:
+    print("No experiments logged yet.")
+else:
+    print(f"{'EXP_ID':<40} {'DATE':<11} {'METHOD':<25} {'EER':>7} {'WER':>7}")
+    print("-" * 95)
+    for r in rows:
+        eer = f"{r['eer']:.2f}" if isinstance(r['eer'], (int,float)) else "—"
+        wer = f"{r['wer']:.2f}" if isinstance(r['wer'], (int,float)) else "—"
+        print(f"{r['id'][:40]:<40} {r['date']:<11} {r['method'][:25]:<25} {eer:>7} {wer:>7}")
+PYEOF
+}
+
+# ----- top -----
+cmd_top() {
+  local metric="eer" limit=10 order=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --metric) metric="$2"; shift 2 ;;
+      --limit)  limit="$2";  shift 2 ;;
+      --order)  order="$2";  shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  EXP_DIR="$EXP_DIR" METRIC="$metric" LIMIT="$limit" ORDER="$order" \
+  python3 - << 'PYEOF'
+import os, json
+from pathlib import Path
+exp_root = Path(os.environ["EXP_DIR"])
+metric = os.environ["METRIC"]
+limit = int(os.environ["LIMIT"])
+order = os.environ["ORDER"]
+
+# Default direction per metric: EER higher=better, WER/linkability lower=better
+default_desc = {"eer": True, "wer": False, "linkability": False}
+desc = (order == "desc") if order in ("asc","desc") else default_desc.get(metric, True)
+direction = "↑" if desc else "↓"
+
+rows = []
+for d in sorted(exp_root.iterdir(), reverse=True) if exp_root.exists() else []:
+    if not d.is_dir(): continue
+    f = d / "summary.json"
+    if not f.exists(): continue
+    try: s = json.load(open(f))
+    except: continue
+    v = (s.get("metrics") or {}).get(metric)
+    if not isinstance(v, (int, float)): continue
+    rows.append((float(v), s, d.name))
+
+rows.sort(key=lambda x: x[0], reverse=desc)
+rows = rows[:limit]
+
+if not rows:
+    print(f"No experiments with metric '{metric}'.")
+else:
+    print(f"Top {len(rows)} by {metric} ({direction} = better):")
+    print(f"{'RANK':<5} {'VALUE':>8} {'EXP_ID':<40} {'METHOD':<25}")
+    print("-" * 80)
+    for i, (v, s, name) in enumerate(rows, 1):
+        print(f"{i:<5} {v:>8.2f} {s.get('id', name)[:40]:<40} {s.get('method','—')[:25]:<25}")
+PYEOF
+}
+
+# ----- show -----
+cmd_show() {
+  local exp_id="$1"
+  local f="$EXP_DIR/$exp_id/summary.json"
+  if [ ! -f "$f" ]; then
+    echo "Error: experiment $exp_id not found at $f" >&2
+    return 1
+  fi
+  python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1])), indent=2))" "$f"
+}
+
+# ----- diff -----
+cmd_diff() {
+  local exp_a="$1" exp_b="$2"
+  EXP_DIR="$EXP_DIR" EXP_A="$exp_a" EXP_B="$exp_b" python3 - << 'PYEOF'
+import os, json
+from pathlib import Path
+root = Path(os.environ["EXP_DIR"])
+a = json.load(open(root / os.environ["EXP_A"] / "summary.json"))
+b = json.load(open(root / os.environ["EXP_B"] / "summary.json"))
+
+def fmt(v):
+    if isinstance(v, (int, float)):
+        return f"{v:.2f}"
+    return str(v) if v is not None else "—"
+
+print(f"{'FIELD':<22} {os.environ['EXP_A'][:30]:<30} {os.environ['EXP_B'][:30]:<30}  Δ")
+print("-" * 100)
+for field in ("date", "method", "config_hash", "hypothesis"):
+    print(f"{field:<22} {str(a.get(field,''))[:30]:<30} {str(b.get(field,''))[:30]:<30}")
+
+print()
+print(f"{'METRIC':<22} {'A':<30} {'B':<30}  Δ")
+print("-" * 100)
+ma = a.get("metrics") or {}
+mb = b.get("metrics") or {}
+for k in sorted(set(ma) | set(mb)):
+    va, vb = ma.get(k), mb.get(k)
+    delta = ""
+    if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+        d = vb - va
+        sign = "+" if d > 0 else ""
+        delta = f"{sign}{d:.2f}"
+    print(f"{k:<22} {fmt(va):<30} {fmt(vb):<30}  {delta}")
+PYEOF
+}
+
+# ----- query -----
+cmd_query() {
+  local query="$1"
+  EXP_DIR="$EXP_DIR" QUERY="$query" python3 - << 'PYEOF'
+import os, json
+from pathlib import Path
+root = Path(os.environ["EXP_DIR"])
+q = os.environ["QUERY"].lower()
+matches = []
+if root.exists():
+    for d in sorted(root.iterdir(), reverse=True):
+        if not d.is_dir(): continue
+        f = d / "summary.json"
+        if not f.exists(): continue
+        try: s = json.load(open(f))
+        except: continue
+        searchable = " ".join(str(s.get(k, "")) for k in
+            ("id", "method", "system_name", "hypothesis"))
+        searchable += " " + " ".join(s.get("tags") or [])
+        if q in searchable.lower():
+            matches.append(s)
+print(f"Found {len(matches)} experiments matching '{q}':")
+print()
+for s in matches:
+    m = s.get("metrics") or {}
+    eer = m.get("eer", "—")
+    print(f"  {s.get('id','')}  EER={eer}  method={s.get('method','—')}")
+    if s.get("hypothesis"):
+        print(f"    hypothesis: {s['hypothesis'][:80]}")
+PYEOF
+}
+
+# ----- stats -----
+cmd_stats() {
+  EXP_DIR="$EXP_DIR" python3 - << 'PYEOF'
+import os, json
+from pathlib import Path
+root = Path(os.environ["EXP_DIR"])
+total = 0
+eers = []
+wers = []
+methods = {}
+if root.exists():
+    for d in sorted(root.iterdir()):
+        if not d.is_dir(): continue
+        f = d / "summary.json"
+        if not f.exists(): continue
+        try: s = json.load(open(f))
+        except: continue
+        total += 1
+        m = s.get("metrics") or {}
+        if isinstance(m.get("eer"), (int, float)): eers.append((s.get("date",""), float(m["eer"])))
+        if isinstance(m.get("wer"), (int, float)): wers.append(float(m["wer"]))
+        method = s.get("method", "—")
+        methods[method] = methods.get(method, 0) + 1
+
+print(f"Project: {os.environ.get('SLUG','?')}")
+print(f"Total experiments: {total}")
+if eers:
+    eers.sort()
+    best = max(eers, key=lambda x: x[1])
+    print(f"Best EER: {best[1]:.2f} ({best[0][:10]})")
+    if len(eers) >= 2:
+        first, last = eers[0][1], eers[-1][1]
+        delta = last - first
+        sign = "+" if delta > 0 else ""
+        direction = "improving" if delta > 0 else "declining" if delta < 0 else "flat"
+        print(f"EER trend: {first:.2f} → {last:.2f} ({sign}{delta:.2f}pp, {direction})")
+if wers:
+    print(f"Best WER: {min(wers):.2f}")
+print()
+print("By method:")
+for m, n in sorted(methods.items(), key=lambda x: -x[1]):
+    print(f"  {m}: {n}")
+PYEOF
+}
+
+# ----- learnings -----
+cmd_learnings() {
+  local query=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --query) query="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ -n "$query" ]; then
+    "${SCRIPT_DIR}/vpstack-learnings-search" --query "$query"
+  else
+    "${SCRIPT_DIR}/vpstack-learnings-search"
+  fi
+}
+
+# ----- timeline -----
+cmd_timeline() {
+  local last=10
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --last) last="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ ! -f "$TIMELINE" ]; then
+    echo "No timeline data yet. Skill runs are logged to $TIMELINE."
+    return
+  fi
+  echo "Last $last skill runs:"
+  tail -"$last" "$TIMELINE" | python3 -c "
+import sys, json
+for line in sys.stdin:
+    try: d = json.loads(line)
+    except: continue
+    skill = d.get('skill', '?')
+    event = d.get('event', '?')
+    ts = d.get('ts', '')[:19].replace('T', ' ')
+    branch = d.get('branch', '')
+    print(f'  {ts}  {skill:<25} {event:<10} {branch}')
+"
+}
+
+# ----- dispatch -----
+SUBCMD="${1:-help}"
+shift || true
+
+case "$SUBCMD" in
+  list)       cmd_list "$@" ;;
+  top)        cmd_top "$@" ;;
+  show)       cmd_show "$@" ;;
+  diff)       cmd_diff "$@" ;;
+  query)      cmd_query "$@" ;;
+  stats)      cmd_stats "$@" ;;
+  learnings)  cmd_learnings "$@" ;;
+  timeline)   cmd_timeline "$@" ;;
+  -h|--help|help) cmd_help ;;
+  *) echo "Unknown subcommand: $SUBCMD. Run 'vpstack-brain help'." >&2; exit 1 ;;
+esac

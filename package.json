@@ -1,6 +1,6 @@
 {
   "name": "vpstack",
-  "version": "0.2.0-dev",
+  "version": "0.3.0-dev",
   "description": "VP2026 voice-privacy toolkit for AI coding agents (Claude Code, Codex, Cursor). Domain-aware markdown skills + bash workflows. No MCP server.",
   "keywords": [
     "voice-anonymization",

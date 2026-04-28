@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+# vpstack-b1 — McAdams B1 voice anonymization, canonical VP2026 parameters.
+#
+# Implements Patino et al. VP2020 algorithm with VP2026 Eval Plan parameters
+# (alpha=0.8, frame=20ms, hop=10ms, lpc_order=20). Runs on any directory of
+# 16kHz mono WAV files. Output goes to {data_path}/anon_b1/ by default.
+#
+# Usage:
+#   vpstack-b1 --data_path /path/to/audio [--output_dir DIR] [--alpha 0.8] [--seed 42]
+#   vpstack-b1 --data_path /path/to/audio --output_format json   # for skill consumption
+#
+# Dependencies: python3 with numpy, scipy, soundfile.
+# Install: pip install numpy scipy soundfile
+
+set -euo pipefail
+
+# Args
+DATA_PATH=""
+OUTPUT_DIR=""
+ALPHA="0.8"
+SEED="42"
+OUTPUT_FORMAT="human"
+LPC_ORDER="20"
+FRAME_MS="20"
+HOP_MS="10"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --data_path)     DATA_PATH="$2";    shift 2 ;;
+    --output_dir)    OUTPUT_DIR="$2";   shift 2 ;;
+    --alpha)         ALPHA="$2";        shift 2 ;;
+    --seed)          SEED="$2";         shift 2 ;;
+    --output_format) OUTPUT_FORMAT="$2"; shift 2 ;;
+    --lpc_order)     LPC_ORDER="$2";    shift 2 ;;
+    --frame_ms)      FRAME_MS="$2";     shift 2 ;;
+    --hop_ms)        HOP_MS="$2";       shift 2 ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$DATA_PATH" ] && { echo "Error: --data_path required" >&2; exit 1; }
+[ -d "$DATA_PATH" ] || { echo "Error: data_path does not exist: $DATA_PATH" >&2; exit 1; }
+[ -z "$OUTPUT_DIR" ] && OUTPUT_DIR="$DATA_PATH/anon_b1"
+
+# Sanity check on alpha
+python3 -c "import sys; a=float('$ALPHA'); sys.exit(0 if 0 < a <= 1 else 1)" \
+  || { echo "Error: alpha must be in (0, 1], got $ALPHA" >&2; exit 1; }
+
+# Run McAdams via inline Python
+DATA_PATH="$DATA_PATH" OUTPUT_DIR="$OUTPUT_DIR" \
+ALPHA="$ALPHA" SEED="$SEED" OUTPUT_FORMAT="$OUTPUT_FORMAT" \
+LPC_ORDER="$LPC_ORDER" FRAME_MS="$FRAME_MS" HOP_MS="$HOP_MS" \
+python3 - << 'PYEOF'
+import os, sys, json, time, hashlib
+from pathlib import Path
+import numpy as np
+import scipy.signal
+
+try:
+    import soundfile as sf
+except ImportError:
+    print(json.dumps({"ok": False, "error": {"code": "DEPS_MISSING",
+        "hint": "pip install soundfile"}}))
+    sys.exit(1)
+
+DATA_PATH = Path(os.environ["DATA_PATH"]).expanduser()
+OUTPUT_DIR = Path(os.environ["OUTPUT_DIR"]).expanduser()
+ALPHA = float(os.environ["ALPHA"])
+SEED = int(os.environ["SEED"])
+OUTPUT_FORMAT = os.environ["OUTPUT_FORMAT"]
+LPC_ORDER = int(os.environ["LPC_ORDER"])
+FRAME_MS = int(os.environ["FRAME_MS"])
+HOP_MS = int(os.environ["HOP_MS"])
+
+def mcadams_anonymize(waveform, sr, alpha, lpc_order, frame_ms, hop_ms, eps=1e-8):
+    frame_len = int(sr * frame_ms / 1000)
+    hop_len   = int(sr * hop_ms / 1000)
+    win = np.hanning(frame_len).astype(np.float32)
+
+    n_frames = max(1, 1 + (len(waveform) - frame_len) // hop_len)
+    padded_len = (n_frames - 1) * hop_len + frame_len
+    if padded_len < len(waveform):
+        n_frames += 1
+        padded_len = (n_frames - 1) * hop_len + frame_len
+    padded = np.zeros(padded_len, dtype=np.float32)
+    padded[:len(waveform)] = waveform
+
+    output = np.zeros(padded_len, dtype=np.float32)
+    norm = np.zeros(padded_len, dtype=np.float32)
+
+    for i in range(n_frames):
+        start = i * hop_len
+        end = start + frame_len
+        frame = padded[start:end] * win
+
+        # Levinson-Durbin LPC
+        try:
+            r = np.correlate(frame, frame, mode="full")[frame_len-1:frame_len+lpc_order]
+            if r[0] < 1e-10: raise ValueError
+            a = np.zeros(lpc_order+1, dtype=np.float64); a[0] = 1.0
+            energy = r[0]
+            for k in range(lpc_order):
+                mu = -np.sum(a[:k+1] * r[k+1:0:-1]) / energy
+                a_new = a.copy()
+                a_new[1:k+2] = a[1:k+2] + mu * a[k::-1][:k+1]
+                a = a_new
+                energy *= 1 - mu*mu
+                if energy < 1e-12: break
+            lpc = a.astype(np.float32)
+        except (np.linalg.LinAlgError, ValueError):
+            output[start:end] += frame
+            norm[start:end] += win
+            continue
+
+        # Pole modification (McAdams)
+        roots = np.roots(lpc)
+        roots = roots[np.abs(roots) < 1.0 - eps]
+        mags = np.abs(roots)
+        angs = np.angle(roots)
+        # Apply to complex (non-real-axis) poles only — preserves conjugate pairs
+        mask = (np.abs(angs) > eps) & (np.abs(np.abs(angs) - np.pi) > eps)
+        new_angs = angs.copy()
+        new_angs[mask] = np.sign(angs[mask]) * (np.abs(angs[mask]) ** alpha)
+        new_roots = mags * np.exp(1j * new_angs)
+        new_lpc = np.real(np.poly(new_roots)).astype(np.float32)
+        if len(new_lpc) > len(lpc):
+            new_lpc = new_lpc[:len(lpc)]
+        elif len(new_lpc) < len(lpc):
+            new_lpc = np.pad(new_lpc, (0, len(lpc) - len(new_lpc)))
+
+        # Synthesize
+        residual = scipy.signal.lfilter(lpc, [1.0], frame)
+        synthesized = scipy.signal.lfilter([1.0], new_lpc, residual)
+        output[start:end] += synthesized.astype(np.float32) * win
+        norm[start:end] += win
+
+    nonzero = norm > eps
+    output[nonzero] /= norm[nonzero]
+    return output[:len(waveform)]
+
+
+# Find WAV files (bounded depth)
+wavs = sorted(DATA_PATH.rglob("*.wav"))
+if not wavs:
+    print(json.dumps({"ok": False, "error": {"code": "DATA_MISSING",
+        "hint": f"No .wav files found under {DATA_PATH}"}}))
+    sys.exit(1)
+
+# Pre-flight sample rate check on first file
+try:
+    info = sf.info(str(wavs[0]))
+    if info.samplerate != 16000:
+        print(f"WARNING: audio is {info.samplerate}Hz, B1 calibrated for 16kHz. "
+              f"Run: sox in.wav -r 16000 out.wav", file=sys.stderr)
+    if info.channels != 1:
+        print(f"WARNING: {info.channels}-channel audio will be downmixed to mono", file=sys.stderr)
+except Exception:
+    pass
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+np.random.seed(SEED)
+
+n = 0
+t0 = time.time()
+last_progress = t0
+
+for wav in wavs:
+    audio, sr = sf.read(str(wav), dtype="float32")
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    anon = mcadams_anonymize(audio, sr, ALPHA, LPC_ORDER, FRAME_MS, HOP_MS)
+    out_path = OUTPUT_DIR / wav.relative_to(DATA_PATH)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(out_path), anon, sr)
+    n += 1
+    now = time.time()
+    if now - last_progress > 30 or n == len(wavs):
+        elapsed = now - t0
+        rate = n / elapsed if elapsed > 0 else 0
+        eta = (len(wavs) - n) / rate if rate > 0 else 0
+        print(f"vpstack-b1: {n}/{len(wavs)} done, ETA {eta:.0f}s",
+              file=sys.stderr, flush=True)
+        last_progress = now
+
+# Config hash for reproducibility tracking
+cfg_str = f"B1:alpha={ALPHA}:lpc={LPC_ORDER}:frame={FRAME_MS}:hop={HOP_MS}:seed={SEED}"
+cfg_hash = hashlib.sha256(cfg_str.encode()).hexdigest()[:16]
+
+result = {
+    "ok": True,
+    "method": "B1-McAdams",
+    "n_files": n,
+    "output_dir": str(OUTPUT_DIR),
+    "config": {"alpha": ALPHA, "lpc_order": LPC_ORDER,
+               "frame_ms": FRAME_MS, "hop_ms": HOP_MS, "seed": SEED},
+    "config_hash": cfg_hash,
+}
+
+if OUTPUT_FORMAT == "json":
+    print(json.dumps(result))
+else:
+    print(f"vpstack-b1: anonymized {n} files to {OUTPUT_DIR}")
+    print(f"vpstack-b1: config hash: {cfg_hash}")
+PYEOF

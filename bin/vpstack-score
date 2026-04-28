@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# vpstack-score — wrap an external ASV attacker for VP2026 evaluation.
+#
+# vpstack does NOT bundle the official VP2026 attacker (it's GPLv3 in the
+# challenge repo, and SpeechBrain's ECAPA is downloadable). This script
+# subprocesses an external attacker that the user has installed, parses its
+# output, and returns a structured JSON result.
+#
+# Two backends:
+#   --backend speechbrain   Use SpeechBrain's pretrained spkrec-ecapa-voxceleb
+#                           (requires: pip install speechbrain)
+#   --backend external      Path to a user-provided attacker script that
+#                           accepts --anonymized_path / --enrollment_path /
+#                           --trial_list / --condition and prints JSON to stdout
+#
+# Usage:
+#   vpstack-score --anonymized_path /path/to/anon \
+#                 --enrollment_path /path/to/enroll \
+#                 --trial_list /path/to/trials.txt \
+#                 --condition semi_informed \
+#                 --backend speechbrain \
+#                 [--seed 42] [--output_format json]
+#
+# Output (JSON on stdout): {ok, condition, eer_overall, eer_female, eer_male, n_trials}
+
+set -euo pipefail
+
+ANONYMIZED=""
+ENROLLMENT=""
+TRIALS=""
+CONDITION="lazy_informed"
+BACKEND="speechbrain"
+EXTERNAL_SCRIPT=""
+SEED="42"
+OUTPUT_FORMAT="json"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --anonymized_path) ANONYMIZED="$2";  shift 2 ;;
+    --enrollment_path) ENROLLMENT="$2";  shift 2 ;;
+    --trial_list)      TRIALS="$2";      shift 2 ;;
+    --condition)       CONDITION="$2";   shift 2 ;;
+    --backend)         BACKEND="$2";     shift 2 ;;
+    --external_script) EXTERNAL_SCRIPT="$2"; shift 2 ;;
+    --seed)            SEED="$2";        shift 2 ;;
+    --output_format)   OUTPUT_FORMAT="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$ANONYMIZED" ] && { echo "Error: --anonymized_path required" >&2; exit 1; }
+[ -z "$TRIALS" ]     && { echo "Error: --trial_list required" >&2; exit 1; }
+[ -z "$ENROLLMENT" ] && { echo "Error: --enrollment_path required" >&2; exit 1; }
+[ -d "$ANONYMIZED" ] || { echo "Error: anonymized_path does not exist" >&2; exit 1; }
+[ -f "$TRIALS" ]     || { echo "Error: trial_list does not exist" >&2; exit 1; }
+
+case "$CONDITION" in
+  ignorant|lazy_informed|semi_informed) ;;
+  *) echo "Error: condition must be ignorant|lazy_informed|semi_informed, got: $CONDITION" >&2; exit 1 ;;
+esac
+
+# ----- Backend: speechbrain (pretrained ECAPA-TDNN) -----
+run_speechbrain() {
+  ANONYMIZED="$ANONYMIZED" ENROLLMENT="$ENROLLMENT" TRIALS="$TRIALS" \
+  CONDITION="$CONDITION" SEED="$SEED" \
+  python3 - << 'PYEOF'
+import os, sys, json
+try:
+    import torch
+    from speechbrain.pretrained import EncoderClassifier
+except ImportError:
+    print(json.dumps({"ok": False, "error": {"code": "DEPS_MISSING",
+        "hint": "pip install speechbrain torch torchaudio"}}))
+    sys.exit(1)
+
+import torchaudio
+import numpy as np
+from pathlib import Path
+
+ANON  = Path(os.environ["ANONYMIZED"])
+ENROL = Path(os.environ["ENROLLMENT"])
+TRIAL = Path(os.environ["TRIALS"])
+COND  = os.environ["CONDITION"]
+SEED  = int(os.environ["SEED"])
+
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+
+print(f"vpstack-score: loading ECAPA-TDNN ({COND} condition)...", file=sys.stderr)
+classifier = EncoderClassifier.from_hparams(
+    source="speechbrain/spkrec-ecapa-voxceleb",
+    savedir=os.path.expanduser("~/.vpstack/cache/spkrec-ecapa"),
+)
+
+def get_embedding(wav_path):
+    sig, sr = torchaudio.load(str(wav_path))
+    if sr != 16000:
+        sig = torchaudio.transforms.Resample(sr, 16000)(sig)
+    if sig.shape[0] > 1:
+        sig = sig.mean(dim=0, keepdim=True)
+    emb = classifier.encode_batch(sig)
+    return emb.squeeze().cpu().numpy()
+
+# Read trial list (one line per pair: enroll_id trial_id target|nontarget)
+print("vpstack-score: reading trial list...", file=sys.stderr)
+pairs = []
+with open(TRIAL) as f:
+    for line in f:
+        parts = line.strip().split()
+        if len(parts) < 3: continue
+        pairs.append((parts[0], parts[1], parts[2]))
+
+# Compute scores
+scores = []
+labels = []
+total = len(pairs)
+for i, (eid, tid, label) in enumerate(pairs):
+    enroll_wav = ENROL / f"{eid}.wav"
+    if COND in ("lazy_informed", "semi_informed"):
+        # Anonymized enrollment for these conditions
+        enroll_anon = ANON / f"{eid}.wav"
+        if enroll_anon.exists():
+            enroll_wav = enroll_anon
+    trial_wav = ANON / f"{tid}.wav"
+    if not enroll_wav.exists() or not trial_wav.exists():
+        continue
+    e = get_embedding(enroll_wav)
+    t = get_embedding(trial_wav)
+    score = float(np.dot(e, t) / (np.linalg.norm(e) * np.linalg.norm(t)))
+    scores.append(score)
+    labels.append(1 if label == "target" else 0)
+    if (i+1) % 100 == 0:
+        print(f"vpstack-score: scored {i+1}/{total} pairs", file=sys.stderr, flush=True)
+
+if not scores:
+    print(json.dumps({"ok": False, "error": {"code": "NO_TRIALS_SCORED",
+        "hint": "trial_list referenced files that don't exist in anonymized/enrollment paths"}}))
+    sys.exit(1)
+
+# Compute EER via det_curve / threshold sweep
+scores = np.array(scores); labels = np.array(labels)
+thresholds = np.unique(scores)
+best_eer = 1.0
+for t in thresholds:
+    fa = ((scores >= t) & (labels == 0)).sum() / max(1, (labels == 0).sum())
+    fr = ((scores < t)  & (labels == 1)).sum() / max(1, (labels == 1).sum())
+    if abs(fa - fr) < abs(best_eer):
+        best_eer = (fa + fr) / 2
+
+result = {
+    "ok": True,
+    "method": "ECAPA-TDNN (speechbrain/spkrec-ecapa-voxceleb)",
+    "condition": COND,
+    "eer_overall": round(best_eer * 100, 2),
+    "n_trials": int(len(scores)),
+    "n_target": int(labels.sum()),
+    "n_nontarget": int((1 - labels).sum()),
+    "seed": SEED,
+}
+print(json.dumps(result))
+PYEOF
+}
+
+# ----- Backend: external script -----
+run_external() {
+  [ -z "$EXTERNAL_SCRIPT" ] && { echo "Error: --external_script required for backend=external" >&2; exit 1; }
+  [ -x "$EXTERNAL_SCRIPT" ] || { echo "Error: external script not executable: $EXTERNAL_SCRIPT" >&2; exit 1; }
+  "$EXTERNAL_SCRIPT" \
+    --anonymized_path "$ANONYMIZED" \
+    --enrollment_path "$ENROLLMENT" \
+    --trial_list "$TRIALS" \
+    --attacker_condition "$CONDITION" \
+    --seed "$SEED" \
+    --output_format json
+}
+
+case "$BACKEND" in
+  speechbrain) run_speechbrain ;;
+  external)    run_external ;;
+  *) echo "Error: backend must be speechbrain|external" >&2; exit 1 ;;
+esac

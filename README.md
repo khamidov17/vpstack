@@ -176,17 +176,21 @@ This gives Claude/Codex/Cursor the VP2026 domain facts (metric directions, basel
 
 | Component | Status |
 |---|---|
-| B1 McAdams anonymization | ✅ Working — inline script, CPU, ~5min |
-| All 15 skills | ✅ Complete markdown workflows |
+| B1 McAdams anonymization (`bin/vpstack-b1`) | ✅ Working end-to-end on any 16kHz WAV directory, CPU |
+| ASV attacker scoring (`bin/vpstack-score`) | ✅ SpeechBrain ECAPA backend; external backend for official VP2026 |
+| Checkpoint hash lock (`bin/vpstack-lock`) | ✅ Generate + verify checkpoints.lock |
+| Experiment store CLI (`bin/vpstack-brain`) | ✅ list / top / show / diff / query / stats / learnings / timeline |
+| All 17 skills | ✅ Complete markdown workflows, call binaries directly |
 | Experiment logging | ✅ `~/.vpstack/projects/{slug}/experiments/` |
-| Reproducibility check (PASS_STRONG / PASS_WEAK) | ✅ |
+| Cross-session learnings (`bin/vpstack-learnings-log`) | ✅ Persistent research insights, surfaced in skill preambles |
+| Timeline / audit trail (`bin/vpstack-timeline-log`) | ✅ Every skill run logged |
+| Reproducibility check (PASS_STRONG / PASS_WEAK) | ✅ Real hash verification via vpstack-lock |
+| Engineering plan (vp-talk Mode E) | ✅ Generates domain_config.yaml + engineering-plan.md |
+| Context save/restore | ✅ `/vp-context-save` + `/vp-context-restore` |
 | Activation gate | ✅ Auto-detects VP2026 projects |
-| Claude Code | ✅ Full skill invocation |
-| Codex | ✅ AGENTS.md context + manual skill steps |
-| Cursor | ✅ `.cursor/rules` + SKILL.md in Composer |
-| B2 neural baseline | ⏳ v0.3 |
-| Full eval pipeline (EER + WER) | ⏳ v0.3 |
-| ASV attacker recipe | ⏳ v0.3 (requires official VP2026 scripts) |
+| Claude Code / Codex / Cursor | ✅ All three clients work — same skills, no setup |
+| B2 neural baseline (HuBERT + ECAPA + HiFi-GAN) | ⏳ v0.3 — official VP2026 challenge has it |
+| Full eval pipeline (EER + WER + linkability bundled) | ⏳ v0.3 — currently use vpstack-score for EER, Whisper for WER |
 
 ---
 

@@ -193,6 +193,23 @@ Also validate alpha if the user is not using the default:
 
 **B1 is signal-processing only — no neural models, no GPU needed.**
 
+Use the `vpstack-b1` binary directly:
+
+```bash
+~/.claude/skills/vpstack/bin/vpstack-b1 --data_path "$DATA_PATH" --seed 42 --output_format json
+```
+
+It produces JSON on stdout: `{"ok": true, "n_files": N, "output_dir": "...", "config_hash": "..."}`. Parse it for the leaderboard table.
+
+If `pip install soundfile scipy numpy` is missing, the binary returns `{"ok": false, "error": {"code": "DEPS_MISSING"}}` — surface this clearly to the user.
+
+**Reference implementation (skip this section unless you need to debug or extend B1).** The McAdams algorithm is implemented inside `vpstack-b1`. If you want to inspect or modify it, read the script directly: `~/.claude/skills/vpstack/bin/vpstack-b1`. The algorithm is a single Python heredoc within that bash file — Patino et al. VP2020 reference, VP2026 Eval Plan parameters (alpha=0.8, frame_length=20ms, hop=10ms, lpc_order=20).
+
+For historical reference, the previous embedded-script version Claude would write to `/tmp/vp_b1_run.py` is no longer needed. The `vpstack-b1` binary supersedes it.
+
+<details>
+<summary>Old approach (deprecated): embed the script inline</summary>
+
 Write `/tmp/vp_b1_run.py` using the Write tool with this content, then run it:
 
 ```python
@@ -287,12 +304,7 @@ Run it:
 python3 /tmp/vp_b1_run.py --data_path "$DATA_PATH" --seed 42
 ```
 
-**Dependencies (if missing):** `pip install soundfile scipy numpy`
-
-**Reading the output:**
-- JSON on stdout with `ok: true` → success, parse `output_dir` and `config_hash`
-- Exit 1 with stderr message → error (wrong path, missing deps)
-- Sample rate warning → inform the user and recommend resampling before proceeding
+</details>
 
 **B2 note:** B2 (HuBERT + ECAPA-TDNN + HiFi-GAN) is not yet part of vpstack. Tell the user: "B2 requires downloading pretrained models and a GPU. The VP2026 challenge provides the official B2 recipe at voiceprivacychallenge.org." B2 column shows "—" in the table.
 

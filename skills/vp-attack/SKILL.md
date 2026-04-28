@@ -93,34 +93,41 @@ Record the chosen condition(s) as `CONDITION` (one of: `ignorant`, `lazy_informe
 
 ### Step 3: Run the attacker
 
-The ASV attacker is provided by the VP2026 challenge organizers and requires SpeechBrain installed. Tell the user to follow the official VP2026 recipe for attacker evaluation, or use the SpeechBrain speaker verification recipe directly.
+Use `vpstack-score` — it wraps SpeechBrain's pretrained ECAPA-TDNN by default and gives a structured JSON result. Two backends:
 
-**If the user has SpeechBrain + VP2026 attacker recipe installed:**
-
+**Default (SpeechBrain):**
 ```bash
-python3 -m speechbrain.pretrained.interfaces.EncoderClassifier \
-  --source speechbrain/spkrec-ecapa-voxceleb \
-  --trial_list "$TRIAL_LIST_PATH" \
-  --enrollment_path "$ENROLLMENT_PATH" \
-  --test_path "$ANONYMIZED_PATH" \
-  --condition "$CONDITION"
-```
-
-Or using the VP2026 challenge-provided attacker script (requires cloning the official challenge repo separately — not bundled with vpstack):
-
-```bash
-python3 run_attacker.py \
+~/.claude/skills/vpstack/bin/vpstack-score \
   --anonymized_path "$ANONYMIZED_PATH" \
   --enrollment_path "$ENROLLMENT_PATH" \
   --trial_list "$TRIAL_LIST_PATH" \
-  --attacker_condition "$CONDITION" \
-  --output_format json \
+  --condition "$CONDITION" \
+  --backend speechbrain \
   --seed 42
 ```
 
-**Parse the output:** Look for JSON on stdout with `eer_overall`, `eer_female`, `eer_male`, and `linkability` fields. If not JSON, parse EER from stdout prose.
+Requires `pip install speechbrain torch torchaudio`. First run downloads `speechbrain/spkrec-ecapa-voxceleb` to `~/.vpstack/cache/spkrec-ecapa/` (~30 MB).
 
-Capture stdout as `ATTACKER_JSON`. Relay stderr progress lines to the user — this runs for hours.
+**External backend (for the official VP2026 challenge attacker):**
+```bash
+~/.claude/skills/vpstack/bin/vpstack-score \
+  --anonymized_path "$ANONYMIZED_PATH" \
+  --enrollment_path "$ENROLLMENT_PATH" \
+  --trial_list "$TRIAL_LIST_PATH" \
+  --condition "$CONDITION" \
+  --backend external \
+  --external_script /path/to/your/attacker.py
+```
+
+The external backend subprocesses your script (no GPLv3 contamination — the script stays on your filesystem, vpstack just invokes it).
+
+**Output (JSON on stdout):**
+```json
+{"ok": true, "method": "ECAPA-TDNN ...", "condition": "lazy_informed",
+ "eer_overall": 38.2, "n_trials": 200, "n_target": 100, "n_nontarget": 100, "seed": 42}
+```
+
+If `ok: false`, surface `error.code` and `error.hint`. Common codes: `DEPS_MISSING`, `NO_TRIALS_SCORED`.
 
 **EER direction:** Higher EER = more private. 50% = random = perfect anonymization.
 
