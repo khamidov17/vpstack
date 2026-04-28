@@ -21,7 +21,7 @@ Force the researcher to formalize a hypothesis before code runs. Catches "I'll k
 ## Preamble (run first)
 
 ```bash
-eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
+eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init vp-hypothesis 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init vp-hypothesis 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
 
 case "$ACTIVATION" in
   NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;

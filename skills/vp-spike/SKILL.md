@@ -22,7 +22,7 @@ Time-boxed ablation runner. Researcher specifies 1-3 component variants; vpstack
 ## Preamble (run first)
 
 ```bash
-eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
+eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init vp-spike 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init vp-spike 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
 
 case "$ACTIVATION" in
   NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
@@ -240,6 +240,32 @@ Status: <CONFIRMED / REFUTED / INCONCLUSIVE>
 Spike: ~/.vpstack/projects/$SLUG/spikes/$EXP_ID.md
 Date: <ISO 8601>
 ```
+
+### Step 9: Log confirmed findings as learnings
+
+For each variant with a CONFIRMED or REFUTED verdict that produced a clear insight, log it so future sessions don't re-discover the same thing:
+
+```bash
+# For CONFIRMED findings:
+~/.claude/skills/vpstack/bin/vpstack-learnings-log \
+  --key "<component>-<what-was-tested>" \
+  --insight "<what was confirmed, specific: metric delta, conditions, dataset>" \
+  --source "vp-spike" \
+  --confidence 0.85
+
+# For REFUTED findings (negative results are learnings too):
+~/.claude/skills/vpstack/bin/vpstack-learnings-log \
+  --key "<component>-refuted-<brief>" \
+  --insight "<what did not work and why, specific conditions>" \
+  --source "vp-spike" \
+  --confidence 0.85
+```
+
+Examples of good learning entries:
+- key: `hubert-l6-beats-l12-eer` insight: "HuBERT layer 6 gave +3.1pp EER over layer 12 on LibriSpeech dev, semi-informed attacker. No WER regression (both within 0.1pp of B2)."
+- key: `alpha-075-female-speakers` insight: "McAdams alpha=0.75 beats alpha=0.8 by 1.2pp EER on female speakers in this corpus. No improvement on male speakers."
+
+Skip logging if INCONCLUSIVE or FAILED — not enough signal.
 
 ## Telemetry (run last)
 

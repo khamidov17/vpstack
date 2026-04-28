@@ -29,7 +29,7 @@ This skill MUST NOT be used for general dev work — it activates only on voice-
 
 ```bash
 TEL_START=$(date +%s)
-eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
+eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init vp-implement 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init vp-implement 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
 
 case "$ACTIVATION" in
   NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;

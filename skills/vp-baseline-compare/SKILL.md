@@ -21,7 +21,7 @@ Run the canonical VP2026 baselines and the user's system on the same eval set; r
 ## Preamble (run first)
 
 ```bash
-eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
+eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init vp-baseline-compare 2>/dev/null || .claude/skills/vpstack/bin/vpstack-skill-init vp-baseline-compare 2>/dev/null || echo 'ACTIVATION=NO_MATCH')"
 
 case "$ACTIVATION" in
   NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
