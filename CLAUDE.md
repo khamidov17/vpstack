@@ -49,15 +49,34 @@ vpstack is **voice-privacy research infrastructure for AI coding agents**. It en
 
 ---
 
+## AskUserQuestion convention
+
+Every decision point in a skill must use this format:
+
+```
+> **Question title**
+>
+> A) Option one — short description
+> B) Option two — short description
+>
+> Recommendation: A, because [one-line reason].
+> Trade-off: [what A gains vs what B gains — one sentence if non-obvious].
+```
+
+The `Recommendation:` line is mandatory. Users need to know the right answer, not just the options. Omit `Trade-off:` if the choice is obvious.
+
+---
+
 ## Common tasks
 
-### Add a new MCP tool
+### Add a new skill
 
-1. Create `mcp-server/vpstack_mcp/tools/{tool_name}.py` matching the shape of existing tools (returns `ToolResult` via `ok()` / `err()`).
-2. Add the tool to the `_TOOLS` registry in `mcp-server/vpstack_mcp/server.py` with description + JSON schema.
-3. Import it in `mcp-server/vpstack_mcp/tools/__init__.py`.
-4. Add any new error codes to `ERROR_CODES` frozenset in `errors.py`.
-5. Write input-validation unit tests in `tests/mcp/test_{tool_name}.py` — no GPU dependency, no real ML.
+1. Create `skills/{skill_name}/SKILL.md`. Copy the frontmatter + preamble from `skills/vp-baseline-compare/SKILL.md` (canonical template). Every skill is self-contained — never reference another skill's preamble.
+2. Preamble must call `vpstack-skill-init` with the absolute path. Skills can pass their name as `$1` for timeline logging: `eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init vp-{name} 2>/dev/null || ...)"`.
+3. Telemetry tail must call `vpstack-telemetry-log` with absolute path.
+4. Log skill start to timeline in preamble (background): `~/.claude/skills/vpstack/bin/vpstack-timeline-log "{...}" 2>/dev/null &`
+5. Log confirmed findings to learnings at the end: `~/.claude/skills/vpstack/bin/vpstack-learnings-log "{...}" 2>/dev/null`
+6. Update README skills table and CHANGELOG.
 
 ### Add a new skill
 

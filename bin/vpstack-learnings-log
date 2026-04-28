@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# vpstack-learnings-log — append a research learning to ~/.vpstack/projects/{slug}/learnings.jsonl
+#
+# Usage:
+#   vpstack-learnings-log '{"key":"b1-short-utterances","insight":"B1 alpha=0.8 causes speaker leakage on utterances < 1s","source":"vp-spike","confidence":0.9}'
+#
+# Or with flags:
+#   vpstack-learnings-log --key b1-short-utterances --insight "..." --source vp-spike --confidence 0.9
+#
+# Fields:
+#   key        (required) short kebab-case identifier
+#   insight    (required) 1-2 sentences, specific and actionable
+#   source     (optional) which skill discovered this (default: manual)
+#   confidence (optional) 0.0-1.0 (default: 0.8)
+#   tags       (optional) comma-separated tags
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Get slug
+SLUG=$("${SCRIPT_DIR}/vpstack-slug" 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+LEARNINGS_DIR="$HOME/.vpstack/projects/$SLUG"
+LEARNINGS_FILE="$LEARNINGS_DIR/learnings.jsonl"
+
+mkdir -p "$LEARNINGS_DIR"
+
+# If first arg looks like JSON, write directly
+if [ $# -eq 1 ] && echo "$1" | grep -q '^{'; then
+  ENTRY="$1"
+  # Inject timestamp if not present
+  if ! echo "$ENTRY" | grep -q '"ts"'; then
+    TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    ENTRY="${ENTRY%\}},\"ts\":\"$TS\",\"slug\":\"$SLUG\"}"
+  fi
+  echo "$ENTRY" >> "$LEARNINGS_FILE"
+  echo "vpstack-learnings-log: saved to $LEARNINGS_FILE" >&2
+  exit 0
+fi
+
+# Flag-based interface
+KEY=""
+INSIGHT=""
+SOURCE="manual"
+CONFIDENCE="0.8"
+TAGS=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --key)      KEY="$2";      shift 2 ;;
+    --insight)  INSIGHT="$2";  shift 2 ;;
+    --source)   SOURCE="$2";   shift 2 ;;
+    --confidence) CONFIDENCE="$2"; shift 2 ;;
+    --tags)     TAGS="$2";     shift 2 ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$KEY" ]     && { echo "Error: --key required" >&2; exit 1; }
+[ -z "$INSIGHT" ] && { echo "Error: --insight required" >&2; exit 1; }
+
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Build JSON via python3 for correct escaping
+python3 - << PYEOF
+import json, sys
+entry = {
+    "key": "$KEY",
+    "insight": """$INSIGHT""",
+    "source": "$SOURCE",
+    "confidence": float("$CONFIDENCE"),
+    "ts": "$TS",
+    "slug": "$SLUG",
+}
+if "$TAGS":
+    entry["tags"] = [t.strip() for t in "$TAGS".split(",")]
+with open("$LEARNINGS_FILE", "a") as f:
+    f.write(json.dumps(entry) + "\n")
+print("vpstack-learnings-log: saved key='$KEY' to $LEARNINGS_FILE", file=sys.stderr)
+PYEOF

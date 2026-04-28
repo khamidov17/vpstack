@@ -94,7 +94,34 @@ echo "$PROJECT_HASH" >> ~/.vpstack/projects-decided
 
 ### Step 1: Check preamble output and set session vars
 
-The preamble already ran SLUG, TEL_START, and domain config loading. Read any warnings it emitted:
+The preamble already ran SLUG, TEL_START, domain config loading, and learnings. Read any output it emitted:
+
+**If `LEARNINGS_COUNT > 0`:** Read the recent learnings listed between `RECENT_LEARNINGS_START` and `RECENT_LEARNINGS_END`. Surface any that are relevant to this baseline run (e.g., known issues with B1 on the current domain).
+
+**If `ROUTING_INJECTION_PENDING=yes`:** Ask once via AskUserQuestion:
+> "Add vpstack skill routing to this project's CLAUDE.md so Claude automatically uses the right skill for each task?"
+> A) Yes — append routing table and commit (recommended)
+> B) No — I'll invoke skills manually
+>
+> Recommendation: A, because it makes Claude route naturally without typing /vp-* every time.
+
+If A: append the routing block below to CLAUDE.md and run `git add CLAUDE.md && git commit -m "chore: add vpstack skill routing"`. Then `touch ~/.vpstack/projects/$SLUG/.routing-injected`.
+If B: `touch ~/.vpstack/projects/$SLUG/.routing-injected` (suppress forever).
+
+Routing block to append:
+```markdown
+## Skill routing (vpstack)
+When voice anonymization work is requested, use these vpstack skills:
+- Planning / research direction → /vp-talk
+- New experiment idea → /vp-hypothesis
+- Test variants → /vp-spike
+- Compare against baselines → /vp-baseline-compare
+- Run attacker / privacy eval → /vp-attack
+- Verify reproducibility → /vp-repro-check
+- Write up experiment → /vp-writeup
+- Debug strange results → /vp-investigate
+- Ship changes → /vp-ship
+```
 
 - If `⚠ RESAMPLE REQUIRED` appeared → **stop and ask the user to resample before continuing**
 - If `⚠ COMPLIANCE BLOCKER` appeared → **stop and fix telemetry before running**

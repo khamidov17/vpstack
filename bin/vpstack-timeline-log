@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# vpstack-timeline-log — append a skill-run event to ~/.vpstack/analytics/timeline.jsonl
+#
+# Called from skill preambles (background) and telemetry tails.
+# Provides an audit trail: what skills ran, when, on which project.
+#
+# Usage:
+#   vpstack-timeline-log '{"skill":"vp-spike","event":"started","branch":"main","session":"123-456"}'
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+ANALYTICS_DIR="$HOME/.vpstack/analytics"
+mkdir -p "$ANALYTICS_DIR"
+TIMELINE_FILE="$ANALYTICS_DIR/timeline.jsonl"
+
+if [ $# -eq 0 ]; then
+  echo "Usage: vpstack-timeline-log '{\"skill\":\"...\",\"event\":\"started\"}'" >&2
+  exit 1
+fi
+
+ENTRY="$1"
+
+# Inject timestamp and slug if missing
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+SLUG=$("${SCRIPT_DIR}/vpstack-slug" 2>/dev/null || echo "unknown")
+
+if ! echo "$ENTRY" | grep -q '"ts"'; then
+  ENTRY="${ENTRY%\}},\"ts\":\"$TS\"}"
+fi
+if ! echo "$ENTRY" | grep -q '"slug"'; then
+  ENTRY="${ENTRY%\}},\"slug\":\"$SLUG\"}"
+fi
+
+echo "$ENTRY" >> "$TIMELINE_FILE"

@@ -89,6 +89,39 @@ emit_kv ACTIVATION_REASON "$ACTIVATION_REASON"
 emit_kv UPGRADE_AVAILABLE "$UPGRADE_AVAILABLE"
 emit_kv SESSION_ID "$SESSION_ID"
 emit_kv VPSTACK_VERSION "$VPSTACK_VERSION"
-# Numerics — no quoting needed, but pass through %q for consistency
 echo "TEL_START=$TEL_START"
 echo "HEADLESS=$HEADLESS"
+
+# 4. Timeline — log skill start (background, non-blocking)
+SKILL_NAME="${1:-unknown}"
+"${SCRIPT_DIR}/vpstack-timeline-log" \
+  "{\"skill\":\"$SKILL_NAME\",\"event\":\"started\",\"session\":\"$SESSION_ID\"}" \
+  2>/dev/null &
+
+# 5. Learnings — surface recent project learnings for context
+SLUG=$("${SCRIPT_DIR}/vpstack-slug" 2>/dev/null || echo "unknown")
+LEARNINGS_FILE="$HOME/.vpstack/projects/$SLUG/learnings.jsonl"
+LEARNINGS_COUNT=0
+[ -f "$LEARNINGS_FILE" ] && LEARNINGS_COUNT=$(wc -l < "$LEARNINGS_FILE" | tr -d ' ')
+echo "LEARNINGS_COUNT=$LEARNINGS_COUNT"
+if [ "$LEARNINGS_COUNT" -gt 0 ]; then
+  # Surface the 3 most recent learnings for skill context
+  echo "RECENT_LEARNINGS_START"
+  tail -3 "$LEARNINGS_FILE" 2>/dev/null | while IFS= read -r line; do
+    KEY=$(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('key',''))" 2>/dev/null || echo "")
+    INSIGHT=$(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('insight','')[:80])" 2>/dev/null || echo "")
+    [ -n "$KEY" ] && echo "  [$KEY] $INSIGHT"
+  done
+  echo "RECENT_LEARNINGS_END"
+fi
+
+# 6. Skill routing — offer to inject routing table into user project CLAUDE.md (once per project)
+_ROUTING_FLAG="$HOME/.vpstack/projects/$SLUG/.routing-injected"
+_HAS_VPSTACK_ROUTING=0
+[ -f "CLAUDE.md" ] && grep -q "## Skill routing (vpstack)" "CLAUDE.md" 2>/dev/null && _HAS_VPSTACK_ROUTING=1
+if [ "$_HAS_VPSTACK_ROUTING" -eq 0 ] && [ ! -f "$_ROUTING_FLAG" ] \
+   && [ "$ACTIVATION" != "DETECTED_FIRST_RUN" ] && [ "$HEADLESS" -eq 0 ]; then
+  echo "ROUTING_INJECTION_PENDING=yes"
+else
+  echo "ROUTING_INJECTION_PENDING=no"
+fi
