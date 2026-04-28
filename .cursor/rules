@@ -1,0 +1,57 @@
+# vpstack — Cursor Rules
+
+You are helping with VP2026 voice-privacy research. Read docs/domain.md for
+the full domain reference. This file gives you the essentials.
+
+## Critical domain facts
+
+- EER: HIGHER = more private. 50% = random attacker = perfect anonymization (the goal).
+- WER: LOWER = better utility.
+- Linkability: LOWER = harder to link speaker identities.
+- ALWAYS report semi-informed attacker EER — it's the official VP2026 ranking metric.
+- DO NOT use VP2020/VP2022/VP2024 numbers. Run baselines on your VP2026 data.
+
+## Running B1 McAdams baseline
+
+The B1 script lives in skills/vp-baseline-compare/SKILL.md as an inline template.
+Extract it and run:
+
+```bash
+# Write the script (see vp-baseline-compare/SKILL.md Step 4 for the full template)
+python3 /tmp/vp_b1_run.py --data_path /path/to/audio --seed 42
+# pip install soundfile scipy numpy  (if needed)
+```
+
+## Running skills in Cursor
+
+Skills (skills/*/SKILL.md) are step-by-step workflows. In Cursor:
+1. Open the relevant SKILL.md in the sidebar
+2. Follow the steps in Composer — run bash commands inline, write files to ~/.vpstack/
+3. Reference docs/domain.md for component tradeoffs and known issues
+
+## Experiment logging
+
+Write to ~/.vpstack/projects/{slug}/experiments/{exp_id}/summary.json
+Get slug: run `~/.claude/skills/vpstack/bin/vpstack-slug` in terminal.
+
+## What's implemented vs pending
+
+- B1 McAdams anonymization: WORKING (see Step 4 in vp-baseline-compare/SKILL.md)
+- B2 neural pipeline: PENDING v0.3
+- ASV attacker: requires official VP2026 challenge attacker script (not bundled)
+- Full EER/WER eval: PENDING v0.3
+
+## Component quick reference
+
+- HuBERT layers 1-4: speaker-leaning (avoid for content encoder)
+- HuBERT layer 6: standard B2 default
+- HuBERT layers 7-9: phonetic content peak (best disentanglement)
+- ECAPA-TDNN: speaker embeddings; farthest-point selection = stronger anonymization
+- HiFi-GAN: use LibriTTS-finetuned weights, not v1 universal (wrong sample rate)
+- McAdams alpha=0.8: canonical B1; alpha<0.6 = artifacts; alpha>0.95 = no anonymization
+
+## Rules
+
+- No VP2024 GPLv3 code
+- No bundled model weights
+- All metrics must be VP2026-specific (run your own baselines)
