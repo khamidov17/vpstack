@@ -98,7 +98,7 @@ If the user answers B, ask for the dev set path instead. If A, proceed but inclu
 If the user chose option A in Step 2, run:
 
 ```bash
-python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.run \
+python3 /tmp/vp_b1_run.py \
   --data_path "$DATA_PATH" \
   --output_format json \
   --seed 42
@@ -113,7 +113,7 @@ python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.run \
 Run the attacker against the anonymized audio. Inform the user: "Running the semi-informed ASV attacker. This can take 30-90 minutes on a single GPU."
 
 ```bash
-python3 -m speechbrain_voice_anon.recipes.VP2026.attacker.run \
+# see /vp-attack skill for attacker command \
   --anonymized_path "$ANONYMIZED_PATH" \
   --enrollment_path "$ENROLLMENT_PATH" \
   --trial_list "$TRIAL_LIST" \

@@ -99,7 +99,7 @@ If any MISSING lines appear → **P1** unless user said "pre-submission" (Tier C
 Always run this even in Quick mode — it's the fastest privacy sanity check.
 
 ```bash
-python3 -m speechbrain_voice_anon.recipes.VP2026.attacker.run \
+python3 -m speechbrain.pretrained # or use the official VP2026 attacker script — see /vp-attack for the full command \
   --anonymized_path "$ANONYMIZED_PATH" \
   --enrollment_path "$ENROLLMENT_PATH" \
   --trial_list "$TRIAL_LIST" \

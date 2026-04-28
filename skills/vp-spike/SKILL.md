@@ -106,7 +106,7 @@ If B: set `OUTCOME=abort` and jump to Telemetry.
 For each variant, run the B1 recipe directly:
 
 ```bash
-python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.run \
+python3 /tmp/vp_b1_run.py \
   --data_path "$VARIANT_DATA_PATH" \
   --output_format json \
   --seed 42

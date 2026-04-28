@@ -45,7 +45,7 @@ More aggressive anonymization raises EER (good) but also raises WER (bad). Every
 Do NOT use hardcoded numbers from older challenge years. Run the actual baselines on your VP2026 data.
 
 - **B1 (McAdams):** Signal-processing only. No GPU. Fast (~5min CPU). Weak anonymization. The floor to beat.
-  - Run: `python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.run --data_path PATH --output_format json --seed 42`
+  - Run: `python3 /tmp/vp_b1_run.py  # write this script using the McAdams template in /vp-baseline-compare --data_path PATH --output_format json --seed 42`
 - **B2 (HuBERT + ECAPA-TDNN + HiFi-GAN):** Neural. Requires GPU. Strong anonymization. The real target.
   - NOT YET IMPLEMENTED in vpstack v0.2. Recipe exits 2 with BASELINE_NOT_IMPLEMENTED.
 
@@ -136,11 +136,11 @@ A valid submission directory must contain:
 
 ```bash
 # Run B1 anonymization + eval
-python3 -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.run \
+python3 /tmp/vp_b1_run.py  # write this script using the McAdams template in /vp-baseline-compare \
   --data_path PATH --output_format json --seed 42
 
 # Run attacker
-python3 -m speechbrain_voice_anon.recipes.VP2026.attacker.run \
+# use the official VP2026 challenge attacker script (not bundled — see voiceprivacychallenge.org) \
   --anonymized_path PATH \
   --enrollment_path PATH \
   --trial_list PATH \

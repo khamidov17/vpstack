@@ -93,10 +93,23 @@ Record the chosen condition(s) as `CONDITION` (one of: `ignorant`, `lazy_informe
 
 ### Step 3: Run the attacker
 
-For each condition to run, execute:
+The ASV attacker is provided by the VP2026 challenge organizers and requires SpeechBrain installed. Tell the user to follow the official VP2026 recipe for attacker evaluation, or use the SpeechBrain speaker verification recipe directly.
+
+**If the user has SpeechBrain + VP2026 attacker recipe installed:**
 
 ```bash
-python3 -m speechbrain_voice_anon.recipes.VP2026.attacker.run \
+python3 -m speechbrain.pretrained.interfaces.EncoderClassifier \
+  --source speechbrain/spkrec-ecapa-voxceleb \
+  --trial_list "$TRIAL_LIST_PATH" \
+  --enrollment_path "$ENROLLMENT_PATH" \
+  --test_path "$ANONYMIZED_PATH" \
+  --condition "$CONDITION"
+```
+
+Or using the VP2026 challenge-provided attacker script (requires cloning the official challenge repo separately — not bundled with vpstack):
+
+```bash
+python3 run_attacker.py \
   --anonymized_path "$ANONYMIZED_PATH" \
   --enrollment_path "$ENROLLMENT_PATH" \
   --trial_list "$TRIAL_LIST_PATH" \
@@ -105,7 +118,11 @@ python3 -m speechbrain_voice_anon.recipes.VP2026.attacker.run \
   --seed 42
 ```
 
-Capture stdout as `ATTACKER_JSON`. The command streams progress to stderr every 30 seconds — relay those lines to the user verbatim so the session does not appear hung.
+**Parse the output:** Look for JSON on stdout with `eer_overall`, `eer_female`, `eer_male`, and `linkability` fields. If not JSON, parse EER from stdout prose.
+
+Capture stdout as `ATTACKER_JSON`. Relay stderr progress lines to the user — this runs for hours.
+
+**EER direction:** Higher EER = more private. 50% = random = perfect anonymization.
 
 **If the command exits non-zero, diagnose from stderr:**
 

@@ -159,21 +159,26 @@ else
     fi
   done
 
-  # Signal 4: CLAUDE.md or README.md mentions VP2026 / voice anonymization
-  for doc_file in CLAUDE.md README.md README.rst; do
+  # Signal 4: CLAUDE.md or README.md mentions VP2026 / voice anonymization / anonymisation
+  # Covers British spelling (anonymisation), underscore variants, and common abbreviations.
+  for doc_file in CLAUDE.md README.md README.rst AGENTS.md; do
     found=$(find_ancestor "$doc_file" 2>/dev/null || true)
-    if [ -n "$found" ] && grep -qiE '(VP2026|voice anonymization|voice anonymisation|voice privacy)' "$found" 2>/dev/null; then
+    if [ -n "$found" ] && grep -qiE '(VP2026|VP2024|voice.anon(ymiz|ymis)|voice.privacy|speaker.anon|VoicePrivacy|EER.*attacker|McAdams|HuBERT.*speaker|ECAPA.*anon)' "$found" 2>/dev/null; then
       matched+=("voice-related text in $doc_file")
       break
     fi
   done
 
-  # Signal 5: project path matches voice-related patterns
+  # Signal 5: project path matches voice-related patterns (hyphens, underscores, both spellings)
   case "$PWD" in
-    *VP2026*|*vp2026*|*voice-anon*|*voice_anon*|*voice-privacy*|*voice_privacy*|*VoicePrivacy*)
+    *VP2026*|*vp2026*|*VP2024*|*vp2024*|\
+    *voice-anon*|*voice_anon*|*voice-privacy*|*voice_privacy*|\
+    *speaker-anon*|*speaker_anon*|*VoicePrivacy*|\
+    *anonymi[sz]ation*|*anonymi[sz]e*)
       matched+=("path matches voice pattern")
       ;;
   esac
+
 
   if [ "${#matched[@]}" -eq 0 ]; then
     result="NO_MATCH"

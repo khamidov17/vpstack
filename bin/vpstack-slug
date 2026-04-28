@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# vpstack-slug — emit the project slug used by MCP tools (vp_log_experiment, vp_search_experiments).
+# vpstack-slug — emit the project slug for ~/.vpstack/projects/{slug}/.
 #
-# Format: {repo-basename}-{sha256[:8] of absolute toplevel path}
+# Format: {repo-basename}-{sha256[:8] of "user:absolute-toplevel-path"}
 #
-# Must match log_experiment._project_slug() exactly (F10 fix: hash prevents collision
-# between two repos with the same basename, e.g. ~/work/vp2026 and ~/forks/vp2026).
+# Includes $USER in the hash so two researchers on a shared machine with the
+# same repo name (e.g. both have ~/vp2026/) write to separate directories.
+# Without $USER, one researcher's experiments silently overwrite the other's.
 #
-# Skills should call this rather than rolling their own basename logic:
+# Skills call this instead of rolling their own basename logic:
 #   SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null \
 #       || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null \
 #       || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
@@ -17,14 +18,17 @@ TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 NAME=$(basename "$TOPLEVEL")
 [ -z "$NAME" ] && NAME="unknown"
 
-# sha256sum (Linux) or shasum -a 256 (macOS) — take first 8 hex chars
+# Include USER in the hash seed — prevents slug collision on shared machines.
+# Use whoami as fallback if $USER is unset (some cluster environments).
+WHOAMI="${USER:-$(whoami 2>/dev/null || echo nobody)}"
+HASH_SEED="${WHOAMI}:${TOPLEVEL}"
+
 if command -v sha256sum >/dev/null 2>&1; then
-  HASH=$(printf '%s' "$TOPLEVEL" | sha256sum | cut -c1-8)
+  HASH=$(printf '%s' "$HASH_SEED" | sha256sum | cut -c1-8)
 elif command -v shasum >/dev/null 2>&1; then
-  HASH=$(printf '%s' "$TOPLEVEL" | shasum -a 256 | cut -c1-8)
+  HASH=$(printf '%s' "$HASH_SEED" | shasum -a 256 | cut -c1-8)
 else
-  # Fallback: python3 is always present on dev machines
-  HASH=$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8])" "$TOPLEVEL")
+  HASH=$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8])" "$HASH_SEED")
 fi
 
 printf '%s-%s\n' "$NAME" "$HASH"

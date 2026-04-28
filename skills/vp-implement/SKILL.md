@@ -23,7 +23,7 @@ allowed-tools:
 
 Coding-with-guardrails for VP2026 recipe components. Replaces "agent codes between meta-commands" with an explicit pre/during/post-gate workflow that catches the five failure modes that bite voice-privacy research: unread hypothesis, placeholder hparams, forgotten determinism, skipped repro-check, unlogged experiment.
 
-This skill MUST NOT be used for general dev work — it activates only on voice-anonymization repos and only writes under `speechbrain_voice_anon/recipes/VP2026/` or `mcp-server/vpstack_mcp/tools/`. For other implementation work in this repo (bash scripts, docs, CI), code directly without this skill.
+This skill MUST NOT be used for general dev work — it activates only on voice-anonymization repos and only writes under `your anonymization recipe in ` or ``. For other implementation work in this repo (bash scripts, docs, CI), code directly without this skill.
 
 ## Preamble (run first)
 
@@ -54,7 +54,7 @@ Read in parallel:
 - `~/.vpstack/projects/$SLUG/hypotheses/*.md` — most recent 5 (mtime ≤ 14 days)
 - `~/.vpstack/projects/$SLUG/research-plans/*.md` — locked plans (from `/vp-talk`)
 - `CLAUDE.md` (repo root) — local rules
-- `speechbrain_voice_anon/recipes/VP2026/baseline_B1/run.py` — canonical recipe shape
+- `your anonymization recipe in baseline_B1/run.py` — canonical recipe shape
 
 ### Step 2: Hypothesis selection
 
@@ -76,7 +76,7 @@ If hypotheses exist, ask which one. Surface its **acceptance criteria verbatim**
 
 > "What are you implementing? (paths, comma-separated)"
 
-Validate every path resolves under `speechbrain_voice_anon/recipes/` or `mcp-server/vpstack_mcp/tools/`. Otherwise BLOCK with `error_class=TARGET_OUT_OF_SCOPE`.
+Validate every path resolves under `your project code in recipes/` or ``. Otherwise BLOCK with `error_class=TARGET_OUT_OF_SCOPE`.
 
 > "Which contract?"
 >
@@ -151,7 +151,7 @@ Branch by `$CONTRACT_TYPE`:
 
 **A — Recipe runner:**
 ```bash
-python -m speechbrain_voice_anon.recipes.VP2026.${NAME}.run \
+python3 /tmp/vp_b1_run.py  # use the McAdams script from vp-baseline-compare for B1; adapt for other recipes \
     --data_path tests/fixtures/librispeech_clip \
     --seed 42 --output_format json | tail -1 > /tmp/impl-out.json
 python -c "

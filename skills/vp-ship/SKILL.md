@@ -64,7 +64,7 @@ git diff "$BASE"...HEAD --name-only | head -20
 ```
 
 Categorize:
-- **Recipe changed** (under `speechbrain_voice_anon/`) → must run repro-check + baseline compare before ship
+- **Recipe changed** (under `your project code in `) → must run repro-check + baseline compare before ship
 - **MCP tool changed** (under `mcp-server/`) → must run pytest -m "not gpu"
 - **Skill changed** (under `skills/`) → must validate SKILL.md frontmatter
 - **bin/ changed** → must `bash -n` syntax-check
@@ -87,7 +87,7 @@ If FAIL → BLOCK SHIP. Reproducibility regression is a P0 — would silently in
 
 ### Step 5: VP-specific gate — submission format (if eval pipeline changed)
 
-If the diff touches `mcp-server/vpstack_mcp/tools/run_eval.py`, `mcp-server/vpstack_mcp/tools/check_submission.py`, or any recipe `run.py`:
+If the diff touches `run_eval.py`, `check_submission.py`, or any recipe `run.py`:
 
 ```bash
 # Validate VP2026 submission directory structure
@@ -126,7 +126,7 @@ Ask via AskUserQuestion:
 > C) Major (0.1.0-dev → 1.0.0-dev) — breaking API change
 > D) No bump — just commit and push at current version
 
-If user picks A/B/C: update `VERSION`, `package.json::version`, `mcp-server/pyproject.toml::version`, `speechbrain_voice_anon/pyproject.toml::version` together (the CI workflow `package-lint` enforces they match).
+If user picks A/B/C: update `VERSION`, `package.json::version`, `mcp-server/pyproject.toml::version`, `your project code in pyproject.toml::version` together (the CI workflow `package-lint` enforces they match).
 
 ### Step 8: CHANGELOG entry
 
