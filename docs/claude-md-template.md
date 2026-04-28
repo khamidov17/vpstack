@@ -37,16 +37,17 @@ If EER improves but WER tanks, that's not a win. Voice privacy requires both.
 
 ## Domain primer for AI agents
 
-**Critical numbers to never get wrong:**
-- EER direction: **HIGHER = more private**. 50% = random = perfect anonymization goal.
-- Original speech (no anonymization): **~3-5% EER** — ASV works perfectly, zero privacy
-- B1 (McAdams, semi-informed attacker): **~13-14% EER** — weak; attacker adapts to LPC modification
-- B2 (neural, semi-informed attacker): **~35-45% EER** — stronger; neural anonymization harder to break
-- B1/B2 WER: **~8.1-8.4%**
-- Ignorant attacker EER: **~50%+** for both baselines — but this is NOT the ranking metric
+**Critical facts (these do NOT change by challenge year):**
+- EER direction: **HIGHER = more private**. 50% = random attacker = perfect anonymization goal.
+- **Semi-informed attacker = the official VP2026 ranking metric.** Always report this one.
+- Ignorant condition gives high EER (~50%+) but is NOT the ranking metric — don't confuse them.
 - Canonical alpha for B1: **0.8** (20ms frame, not 25ms — corrected 2026-04-28)
 
-These are approximate VP2020/VP2022 numbers. Run `/vp-baseline-compare` on your actual VP2026 data for project-specific references. Never cite the approximate numbers above in a paper.
+**Challenge-specific numbers you must NOT hardcode from previous years:**
+- B1 EER, B2 EER, WER: these are VP2026-specific. Different data, different trial lists.
+- Run `/vp-baseline-compare` on your VP2026 data to get the correct reference values.
+- Log them with `vp_log_experiment(exp_id='b1-reference', ...)` so they anchor the leaderboard.
+- The VP2026 Eval Plan PDF from the challenge organizers is the authoritative source.
 
 **The privacy/utility tradeoff:** Aggressive anonymization increases EER but also increases WER. Every ablation experiment must report BOTH metrics.
 

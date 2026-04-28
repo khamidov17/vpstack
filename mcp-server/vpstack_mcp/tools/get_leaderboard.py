@@ -19,59 +19,57 @@ from typing import Any
 
 from vpstack_mcp.errors import ToolResult, ok
 
-# B1/B2 approximate reference numbers — SEMI-INFORMED attacker condition.
+# VP2026 reference rows — EER direction: HIGHER = more private. 50% = random = goal.
 #
-# EER direction: HIGHER = more private. 50% = random (perfect anonymization).
-# Original (no anonymization) EER: ~3-5% (ASV works perfectly, zero privacy).
+# We do NOT hardcode B1/B2 EER numbers here. Reasons:
+#   1. VP2026 numbers are challenge-year-specific — different data, different trial lists.
+#   2. The authoritative source is the VP2026 Eval Plan PDF from the challenge organizers.
+#   3. Older years (VP2020/VP2022) had different numbers that don't transfer.
 #
-# Under SEMI-INFORMED condition (official VP2026 ranking attacker), which retrains
-# ECAPA on anonymized data:
-#   B1 (McAdams): ~13-14% EER — low, because the adapted attacker easily sees through LPC
-#   B2 (neural):  ~35-45% EER — much higher, neural anonymization is harder to adapt against
+# The 50% row is the only safe hardcoded reference — it is a mathematical constant
+# (random attacker), not a challenge-specific measurement.
 #
-# Under IGNORANT condition, both baselines give ~50%+ EER because the attacker has no
-# knowledge of anonymization — but ignorant EER is NOT the ranking metric.
-#
-# These are approximate VP2020/VP2022 numbers; VP2026 numbers may differ slightly.
-# Run /vp-baseline-compare on your actual data to get project-specific reference values.
-# Do NOT report these illustrative numbers in a paper — run the real baselines.
+# To get your actual B1/B2 reference values: run /vp-baseline-compare on your VP2026 data.
+# Your logged experiments will then appear in the leaderboard with real baselines alongside.
 _REFERENCE_ROWS = [
     {
-        "id": "50% (random — perfect anonymization goal)",
+        "id": "50% EER — random attacker (perfect anonymization goal)",
         "type": "reference",
         "eer": 50.0,
         "wer": None,
         "linkability": None,
-        "method": "theoretical maximum",
-        "note": "An attacker doing random guessing. This is what you're trying to approach.",
+        "method": "theoretical maximum — mathematical constant, not challenge-specific",
+        "note": (
+            "A completely random speaker-verification decision gives 50% EER. "
+            "Perfect anonymization makes the attacker indistinguishable from random. "
+            "This is the goal, not an achievable result for most current systems."
+        ),
     },
     {
-        "id": "B2 (HuBERT+ECAPA+HiFi-GAN) — semi-informed ~approx",
-        "type": "reference",
-        "eer": 40.0,
-        "wer": 8.1,
-        "linkability": 0.42,
-        "method": "neural",
-        "note": "Approximate. Semi-informed attacker. Run /vp-baseline-compare for actual number.",
+        "id": "B1 baseline — run /vp-baseline-compare to populate",
+        "type": "reference_placeholder",
+        "eer": None,
+        "wer": None,
+        "linkability": None,
+        "method": "McAdams α=0.8, signal-processing",
+        "note": (
+            "VP2026-specific B1 EER not hardcoded — numbers are challenge-year-specific. "
+            "Run: /vp-baseline-compare to get the actual B1 number on your VP2026 data. "
+            "Log it with vp_log_experiment(exp_id='b1-reference', ...) to anchor this table."
+        ),
     },
     {
-        "id": "B1 (McAdams α=0.8) — semi-informed ~approx",
-        "type": "reference",
-        "eer": 13.5,
-        "wer": 8.4,
-        "linkability": 0.45,
-        "method": "signal-processing",
-        "note": "Approximate. Semi-informed attacker adapts easily to McAdams. "
-                "Ignorant condition gives ~50%+.",
-    },
-    {
-        "id": "Original speech (no anonymization)",
-        "type": "reference",
-        "eer": 4.0,
-        "wer": 5.0,
-        "linkability": 0.05,
-        "method": "no anonymization",
-        "note": "Approximate. ASV works well, zero privacy. Your system must be significantly above this.",
+        "id": "B2 baseline — run /vp-baseline-compare to populate",
+        "type": "reference_placeholder",
+        "eer": None,
+        "wer": None,
+        "linkability": None,
+        "method": "HuBERT + ECAPA-TDNN + HiFi-GAN, neural",
+        "note": (
+            "VP2026-specific B2 EER not hardcoded — numbers are challenge-year-specific. "
+            "Run: /vp-baseline-compare to get the actual B2 number on your VP2026 data. "
+            "B2 EER should be significantly higher than B1 (neural is harder to break)."
+        ),
     },
 ]
 
@@ -174,17 +172,22 @@ def handle(
     # Add reference rows for comparison context
     if include_references:
         ref_rows = _REFERENCE_ROWS[:]
-        # beats_B1 / beats_B2: does this experiment exceed the reference EER?
-        # B1 semi-informed ≈ 13.5% EER (weak, attacker adapts easily to McAdams)
-        # B2 semi-informed ≈ 40% EER (neural, harder to adapt against)
-        # Both are approximate — run /vp-baseline-compare for project-specific values.
-        b1_eer_approx = 13.5
-        b2_eer_approx = 40.0
+        # beats_B1 / beats_B2: only computable if a logged experiment is named "b1-reference"
+        # or "b2-reference" (i.e., the researcher ran /vp-baseline-compare and logged it).
+        # We do NOT use hardcoded approximate numbers — VP2026 baselines are challenge-specific.
+        b1_ref = next((e for e in rows if "b1" in (e.get("id") or "").lower()), None)
+        b2_ref = next((e for e in rows if "b2" in (e.get("id") or "").lower()), None)
+        b1_eer = b1_ref["eer"] if b1_ref and _is_valid_float(b1_ref.get("eer")) else None
+        b2_eer = b2_ref["eer"] if b2_ref and _is_valid_float(b2_ref.get("eer")) else None
         for r in rows:
+            if r.get("type") in ("reference", "reference_placeholder"):
+                continue
             eer = r.get("eer")
             if _is_valid_float(eer):
-                r["beats_B1_approx"] = float(eer) > b1_eer_approx
-                r["beats_B2_approx"] = float(eer) > b2_eer_approx
+                if b1_eer is not None:
+                    r["beats_B1"] = float(eer) > b1_eer
+                if b2_eer is not None:
+                    r["beats_B2"] = float(eer) > b2_eer
         rows = ref_rows + rows  # references at top for easy comparison
 
     # Add rank numbers (skip reference rows)

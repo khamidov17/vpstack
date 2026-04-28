@@ -203,24 +203,20 @@ def handle(include_learnings: bool = True) -> ToolResult:
     deadline_days = _days_to_deadline(config_path)
     learnings = _load_learnings(learnings_path, limit=5) if include_learnings else []
 
-    # B1/B2 approximate reference (semi-informed attacker condition, which is the ranking metric).
-    # IMPORTANT: EER direction — HIGHER = more private. 50% = random = perfect anonymization.
-    # Original speech (no anonymization): ~3-5% EER (ASV works perfectly).
-    # B1 (McAdams, semi-informed): ~13.5% — low, attacker adapts easily to LPC modification.
-    # B2 (neural, semi-informed): ~35-45% — much higher, neural anonymization harder to break.
-    # Ignorant condition gives ~50%+ for both (uninformed attacker can't adapt) — not the ranking metric.
-    # These are VP2020/VP2022 approximations. Run /vp-baseline-compare for project-specific values.
+    # EER reference frame — only 50% is hardcoded (mathematical constant, not challenge-specific).
+    # B1/B2 baseline EER numbers are VP2026-specific and must come from running the actual baselines
+    # on your VP2026 data. Do not use numbers from previous challenge years.
+    # Run /vp-baseline-compare, then log with vp_log_experiment(exp_id='b1-reference', ...).
     reference = {
-        "random_perfect_anonymization": "50% EER",
-        "B2_semi_informed_approx": "~35-45% EER (neural, stronger)",
-        "B1_semi_informed_approx": "~13.5% EER (McAdams, weaker — attacker adapts)",
-        "original_no_anonymization": "~3-5% EER (ASV baseline, zero privacy)",
-        "note": (
-            "Higher EER = more private. 50% = random = goal. "
-            "B1 and B2 numbers are approximate from VP2020/VP2022 — "
-            "run /vp-baseline-compare on your actual data for this project's reference values. "
-            "Never report these approximations in a paper."
-        ),
+        "50_pct_random": "50% EER — random attacker. Mathematical constant. This is the goal.",
+        "eer_direction": "HIGHER EER = more private. Lower EER = attacker succeeds more often.",
+        "attacker_conditions": {
+            "semi_informed": "Official VP2026 ranking metric. Attacker retrains ECAPA on your anonymized train-clean-360. Hardest to fool.",
+            "lazy_informed": "Intermediate. Attacker uses pretrained model with anonymized enrollment.",
+            "ignorant": "Easiest to fool — attacker doesn't know anonymization was applied. NOT the ranking metric.",
+        },
+        "how_to_get_vp2026_baselines": "Run /vp-baseline-compare on your VP2026 data, then log the results with vp_log_experiment so they appear in vp_get_leaderboard.",
+        "warning": "B1/B2 EER numbers from VP2020/VP2022 do not transfer to VP2026 — different data, trial lists, and possibly updated models.",
     }
 
     result: dict[str, Any] = {
