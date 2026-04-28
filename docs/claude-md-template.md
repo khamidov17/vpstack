@@ -38,11 +38,15 @@ If EER improves but WER tanks, that's not a win. Voice privacy requires both.
 ## Domain primer for AI agents
 
 **Critical numbers to never get wrong:**
-- B1 baseline EER: **~14.2%** (McAdams, weak anonymization)
-- B2 baseline EER: **~12.3%** (HuBERT+ECAPA+HiFi-GAN, strong)
-- B2 WER: **~8.1%**
-- Random attacker EER: **50%** (maximum possible privacy)
+- EER direction: **HIGHER = more private**. 50% = random = perfect anonymization goal.
+- Original speech (no anonymization): **~3-5% EER** — ASV works perfectly, zero privacy
+- B1 (McAdams, semi-informed attacker): **~13-14% EER** — weak; attacker adapts to LPC modification
+- B2 (neural, semi-informed attacker): **~35-45% EER** — stronger; neural anonymization harder to break
+- B1/B2 WER: **~8.1-8.4%**
+- Ignorant attacker EER: **~50%+** for both baselines — but this is NOT the ranking metric
 - Canonical alpha for B1: **0.8** (20ms frame, not 25ms — corrected 2026-04-28)
+
+These are approximate VP2020/VP2022 numbers. Run `/vp-baseline-compare` on your actual VP2026 data for project-specific references. Never cite the approximate numbers above in a paper.
 
 **The privacy/utility tradeoff:** Aggressive anonymization increases EER but also increases WER. Every ablation experiment must report BOTH metrics.
 

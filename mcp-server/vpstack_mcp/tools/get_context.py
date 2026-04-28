@@ -203,11 +203,24 @@ def handle(include_learnings: bool = True) -> ToolResult:
     deadline_days = _days_to_deadline(config_path)
     learnings = _load_learnings(learnings_path, limit=5) if include_learnings else []
 
-    # B1/B2 reference for orientation
+    # B1/B2 approximate reference (semi-informed attacker condition, which is the ranking metric).
+    # IMPORTANT: EER direction — HIGHER = more private. 50% = random = perfect anonymization.
+    # Original speech (no anonymization): ~3-5% EER (ASV works perfectly).
+    # B1 (McAdams, semi-informed): ~13.5% — low, attacker adapts easily to LPC modification.
+    # B2 (neural, semi-informed): ~35-45% — much higher, neural anonymization harder to break.
+    # Ignorant condition gives ~50%+ for both (uninformed attacker can't adapt) — not the ranking metric.
+    # These are VP2020/VP2022 approximations. Run /vp-baseline-compare for project-specific values.
     reference = {
-        "B1_eer": 14.2,
-        "B2_eer": 12.3,
-        "note": "Higher EER = more private. B1 = McAdams baseline, B2 = HuBERT+ECAPA+HiFi-GAN.",
+        "random_perfect_anonymization": "50% EER",
+        "B2_semi_informed_approx": "~35-45% EER (neural, stronger)",
+        "B1_semi_informed_approx": "~13.5% EER (McAdams, weaker — attacker adapts)",
+        "original_no_anonymization": "~3-5% EER (ASV baseline, zero privacy)",
+        "note": (
+            "Higher EER = more private. 50% = random = goal. "
+            "B1 and B2 numbers are approximate from VP2020/VP2022 — "
+            "run /vp-baseline-compare on your actual data for this project's reference values. "
+            "Never report these approximations in a paper."
+        ),
     }
 
     result: dict[str, Any] = {

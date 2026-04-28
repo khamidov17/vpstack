@@ -19,23 +19,59 @@ from typing import Any
 
 from vpstack_mcp.errors import ToolResult, ok
 
-# B1/B2 canonical reference numbers (from VP2024 eval plan PDF, corrected 2026-04-28 audit)
+# B1/B2 approximate reference numbers — SEMI-INFORMED attacker condition.
+#
+# EER direction: HIGHER = more private. 50% = random (perfect anonymization).
+# Original (no anonymization) EER: ~3-5% (ASV works perfectly, zero privacy).
+#
+# Under SEMI-INFORMED condition (official VP2026 ranking attacker), which retrains
+# ECAPA on anonymized data:
+#   B1 (McAdams): ~13-14% EER — low, because the adapted attacker easily sees through LPC
+#   B2 (neural):  ~35-45% EER — much higher, neural anonymization is harder to adapt against
+#
+# Under IGNORANT condition, both baselines give ~50%+ EER because the attacker has no
+# knowledge of anonymization — but ignorant EER is NOT the ranking metric.
+#
+# These are approximate VP2020/VP2022 numbers; VP2026 numbers may differ slightly.
+# Run /vp-baseline-compare on your actual data to get project-specific reference values.
+# Do NOT report these illustrative numbers in a paper — run the real baselines.
 _REFERENCE_ROWS = [
     {
-        "id": "B2 (HuBERT+ECAPA+HiFi-GAN)",
+        "id": "50% (random — perfect anonymization goal)",
         "type": "reference",
-        "eer": 12.3,
+        "eer": 50.0,
+        "wer": None,
+        "linkability": None,
+        "method": "theoretical maximum",
+        "note": "An attacker doing random guessing. This is what you're trying to approach.",
+    },
+    {
+        "id": "B2 (HuBERT+ECAPA+HiFi-GAN) — semi-informed ~approx",
+        "type": "reference",
+        "eer": 40.0,
         "wer": 8.1,
         "linkability": 0.42,
         "method": "neural",
+        "note": "Approximate. Semi-informed attacker. Run /vp-baseline-compare for actual number.",
     },
     {
-        "id": "B1 (McAdams α=0.8)",
+        "id": "B1 (McAdams α=0.8) — semi-informed ~approx",
         "type": "reference",
-        "eer": 14.2,
+        "eer": 13.5,
         "wer": 8.4,
         "linkability": 0.45,
         "method": "signal-processing",
+        "note": "Approximate. Semi-informed attacker adapts easily to McAdams. "
+                "Ignorant condition gives ~50%+.",
+    },
+    {
+        "id": "Original speech (no anonymization)",
+        "type": "reference",
+        "eer": 4.0,
+        "wer": 5.0,
+        "linkability": 0.05,
+        "method": "no anonymization",
+        "note": "Approximate. ASV works well, zero privacy. Your system must be significantly above this.",
     },
 ]
 
@@ -138,14 +174,17 @@ def handle(
     # Add reference rows for comparison context
     if include_references:
         ref_rows = _REFERENCE_ROWS[:]
-        # Mark whether each experiment beats B1/B2 on EER
-        b2_eer = 12.3
-        b1_eer = 14.2
+        # beats_B1 / beats_B2: does this experiment exceed the reference EER?
+        # B1 semi-informed ≈ 13.5% EER (weak, attacker adapts easily to McAdams)
+        # B2 semi-informed ≈ 40% EER (neural, harder to adapt against)
+        # Both are approximate — run /vp-baseline-compare for project-specific values.
+        b1_eer_approx = 13.5
+        b2_eer_approx = 40.0
         for r in rows:
             eer = r.get("eer")
             if _is_valid_float(eer):
-                r["beats_B2"] = float(eer) > b2_eer
-                r["beats_B1"] = float(eer) > b1_eer
+                r["beats_B1_approx"] = float(eer) > b1_eer_approx
+                r["beats_B2_approx"] = float(eer) > b2_eer_approx
         rows = ref_rows + rows  # references at top for easy comparison
 
     # Add rank numbers (skip reference rows)
@@ -158,9 +197,13 @@ def handle(
             rank += 1
 
     metric_note = {
-        "eer": "Higher EER = more private. Target: beat B2 (12.3%).",
-        "wer": "Lower WER = better utility. B2 baseline: 8.1%.",
-        "linkability": "Lower linkability = harder for attacker to link speakers.",
+        "eer": (
+            "Higher EER = more private. 50% = random (perfect anonymization goal). "
+            "B1 semi-informed ≈ 13.5% (weak), B2 semi-informed ≈ 40% (strong). "
+            "Run /vp-baseline-compare on your data for accurate reference values."
+        ),
+        "wer": "Lower WER = better utility. B2 baseline: ~8.1%.",
+        "linkability": "Lower linkability = harder for attacker to link speakers. B2 ≈ 0.42.",
     }[sort_by]
 
     return ok({
