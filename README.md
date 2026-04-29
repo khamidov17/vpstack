@@ -12,99 +12,140 @@ vpstack gives AI agents the domain knowledge and workflow automation they need f
 
 ## How it works
 
-A complete experiment cycle, hypothesis to ship, with the actual commands:
+vpstack has two entry points — `/vp-talk` mode R for research and mode E for engineering. They diverge at the first command and rejoin at `/vp-brain` and `/vp-ship`. Pick the path that matches what you're actually doing.
+
+### Research path — VP2026 benchmark, ablations, paper
 
 ```
-You:    My content encoder is HuBERT layer 12. I want to test layer 6.
+You:    /vp-talk
 
+Claude: What kind of work is this?
+        A) Research — VP2026 benchmark, ablations, paper
+        B) Engineering — building a system for production
+You:    A
+
+Claude: 8 forcing questions: open question · threat model · contribution claim ·
+        baseline · eval scope · failure modes · scope discipline.
+        Locks ~/.vpstack/projects/my-system/research-plans/2026-04-29-hubert-ablation.md
+```
+
+```
 You:    /vp-hypothesis
 
 Claude: [7 questions: what changes, baseline, acceptance criteria, magnitude]
-        "Domain note: Layer 6 is pre-content peak — phonetic + residual speaker.
-         Layer 7-9 is the phonetic content peak per Pasad et al. (ASRU 2021)."
-        → Writes ~/.vpstack/projects/my-system/hypotheses/20260429-hubert-l6.md
+        Domain note: Layer 6 is pre-content peak — phonetic + residual speaker.
+        Layer 7-9 is the phonetic content peak per Pasad et al. (ASRU 2021).
+        → ~/.vpstack/projects/my-system/hypotheses/20260429-hubert-l6.md
 ```
 
 ```
 You:    /vp-spike
 
-Claude: [reads hypothesis, asks for 3 variant data paths]
-        Running variants via vpstack-b1...
-
-        $ vpstack-b1 --data_path /data/l6/ --seed 42
-        $ vpstack-b1 --data_path /data/l9/ --seed 42
+Claude: $ vpstack-b1 --data_path /data/l6/  --seed 42
+        $ vpstack-b1 --data_path /data/l9/  --seed 42
         $ vpstack-b1 --data_path /data/l12/ --seed 42
 
         | Variant   | Files | Output           | Config hash       |
         | layer-6   | 847   | /data/l6/anon_b1 | d4f662e1b76de2f5  |
         | layer-9   | 847   | /data/l9/anon_b1 | a72e8c33f9a14b6e  |
         | layer-12  | 847   | /data/l12/anon_b1| b8f1d24e6c8a7f1d  |
-
-        → Run /vp-attack on each output to get EER for the verdict
 ```
 
 ```
 You:    /vp-attack on /data/l6/anon_b1
 
-Claude: Which condition? semi-informed is the official VP2026 ranking metric.
-You:    lazy-informed first.
+Claude: $ vpstack-score --anonymized_path /data/l6/anon_b1 \
+            --condition lazy_informed --backend speechbrain --seed 42
 
-        $ vpstack-score \
-            --anonymized_path /data/l6/anon_b1 \
-            --enrollment_path /data/enroll \
-            --trial_list /data/trials.txt \
-            --condition lazy_informed \
-            --backend speechbrain --seed 42
-
-        VP2026 Attacker Results — lazy_informed
-        EER overall:  38.2%   (↑ = more private, 50% = random)
-        N trials:     200     (100 target / 100 nontarget)
-        seed:         42
-
+        VP2026 Attacker — lazy_informed
+        EER overall: 38.2%   (↑ = more private, 50% = random)
         → Run semi-informed before citing this in a paper
 ```
 
 ```
 You:    /vp-repro-check
 
-Claude: $ vpstack-lock verify checkpoints.lock
-        OK:      hubert-base
-        OK:      ecapa-voxceleb
-        OK:      hifigan-libritts
-        vpstack-lock verify: 3/3 OK
-
+Claude: $ vpstack-lock verify checkpoints.lock         3/3 OK
         Reproducibility: PASS_STRONG
-        ✓ seed pinned: 42
-        ✓ splits: explicit (VP2026 dev-clean v2026.03.17)
-        ✓ checkpoints: 3/3 hash-verified
-        ✓ hparams: no placeholders
-        ✓ determinism: torch_deterministic: true
+        ✓ seed pinned · splits explicit · checkpoints hash-verified · no placeholders
 ```
 
 ```
 You:    /vp-brain top --metric eer
 
 Claude: $ vpstack-brain top --metric eer --limit 5
-
-        Top 5 by eer (↑ = better):
-        RANK    VALUE  EXP_ID                                METHOD
-        1       38.20  layer-6-spike-20260429T143012        B1-McAdams
-        2       35.10  layer-9-spike-20260429T143245        B1-McAdams
-        3       28.40  layer-12-spike-20260429T143518       B1-McAdams
-        4       14.20  b1-reference-20260428                B1-McAdams
-        5        4.10  original-no-anon-20260427            none
+        RANK   VALUE  EXP_ID                          METHOD
+        1     38.20  layer-6-spike-20260429T143012   B1-McAdams
+        2     35.10  layer-9-spike-20260429T143245   B1-McAdams
+        3     28.40  layer-12-spike-20260429T143518  B1-McAdams
 ```
 
 ```
 You:    /vp-ship
 
-Claude: Tests passed. Repro PASS_STRONG. Deferred gates: 0.
+Claude: Repro PASS_STRONG. Deferred gates: 0.
         VERSION: 0.3.0-dev → 0.3.1-dev
-        Commit: abc1234 — "feat: HuBERT layer ablation"
         PR: github.com/you/vp2026-system/pull/7
 ```
 
-That's one experiment cycle. Hypothesis → spike (real B1 runs) → attack (real ECAPA scoring) → repro-check (real hash verification) → leaderboard → ship. No skill pretends to do something it can't.
+### Engineering path — building an anonymizer for a real product
+
+```
+You:    /vp-talk
+You:    B  (engineering)
+
+Claude: 6 domain questions: domain · audio format · methods · metrics · compliance · scale.
+        Domain: medical / clinical speech.
+        Sample rate: 44.1 kHz → resample to 16 kHz required (sox -r 16000)
+        Compliance: HIPAA → telemetry coerced to off.
+        Methods: B1 baseline + speaker-selection for production.
+
+        Wrote:
+          ~/.vpstack/projects/my-system/domain_config.yaml      (read by every skill)
+          ~/.vpstack/projects/my-system/engineering-plan.md     (feeds /vp-plan-eng-review)
+```
+
+```
+You:    /vp-plan-eng-review
+
+Claude: 18 VP-specific gates against the engineering plan.
+        P0: license isolation OK · runtime model fetch OK · 16kHz contract OK
+        P1: three attacker conditions covered · F-F/M-M/Mixed gender split planned
+        2 deferred gates noted for follow-up.
+```
+
+```
+You:    /vp-baseline-compare
+
+Claude: vpbrain says you ran B1 on this data 3 days ago (eer=38.2). Reuse?
+You:    Yes
+        → Loads prior numbers, skips the 5-min B1 re-run.
+```
+
+```
+You:    /vp-implement
+        → Runs the 14-step dev workflow: license check, repro gates, contract check,
+          test green-bar, atomic commit. Logs experiment to vpbrain on success.
+```
+
+```
+You:    /vp-qa
+
+Claude: Quick tier (~15min):
+        ✓ vp-repro-check     PASS_STRONG
+        ✓ lazy_informed smoke EER=37.8%
+        ✓ submission format  CSVs valid for Track 1
+        QA score: 92 / 100
+```
+
+```
+You:    /vp-ship
+        → same shape as research path. Version bump, repro gate, PR.
+```
+
+### What's the same on both paths
+
+`/vp-brain` browses the same JSONL store. `/vp-repro-check` runs the same hash verification. `/vp-ship` enforces the same gates. Whether you're chasing a paper or shipping a product, the binaries underneath are the same — `vpstack-b1`, `vpstack-score`, `vpstack-lock`, `vpstack-brain`. No skill pretends to do something it can't.
 
 ---
 
