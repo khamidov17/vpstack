@@ -90,6 +90,47 @@ Collect paths:
 
 Parse stdout JSON; set `$ANONYMIZED_PATH=$(jq -r .output_dir <<<"$B1_OUT")`.
 
+### Step 2.5: Dependency check (run BEFORE the orchestrator)
+
+`vpstack-eval` calls three downstream binaries with separate Python deps. Probe each one based on what the user actually wants to run, so the user only has to install what's needed:
+
+```bash
+DEPS_BIN=~/.claude/skills/vpstack/bin/vpstack-deps
+[ -x "$DEPS_BIN" ] || DEPS_BIN=.claude/skills/vpstack/bin/vpstack-deps
+
+# Build the list of features required for THIS run
+NEEDED=()
+[ -n "${TRIAL_LIST_FF:-}" ] || [ -n "${TRIAL_LIST_MM:-}" ] || [ -n "${TRIAL_LIST_MIXED:-}" ] && NEEDED+=("score")
+[ -n "${REFERENCE_TEXT:-}" ] && NEEDED+=("wer")
+NEEDED+=("utmos")   # always run — UTMOS is automatic in vpstack-eval
+
+# Find missing
+MISSING=()
+for feat in "${NEEDED[@]}"; do
+  $DEPS_BIN check "$feat" >/dev/null 2>&1 || MISSING+=("$feat")
+done
+```
+
+If `MISSING` is non-empty, list them with their pip packages and ask via AskUserQuestion **before** any pip mutation:
+
+> **The full eval needs Python packages that aren't installed yet.** Per missing component:
+>
+> - `score` (ASV / EER): `<vpstack-deps packages score>`
+> - `wer` (Whisper / WER): `<vpstack-deps packages wer>`
+> - `utmos` (UTMOS / PMOS): `<vpstack-deps packages utmos>`
+>
+> A) Install all missing now (`pip install --user` per component, sandboxed to `~/.local`)
+> B) Install only score+wer; skip utmos (naturalness column will be blank)
+> C) I'll install manually — pause this skill
+> D) Run partial eval: skip the components that need missing packages
+>
+> Recommendation: A for a real eval. D for a quick smoke run when you only need one metric.
+
+On A: loop `$DEPS_BIN install <feat>` for each item in `MISSING`. Stop at first failure.
+On B: install only `score` and `wer`. UTMOS will be reported as `skipped` by the orchestrator, which already handles this gracefully.
+On C: print the per-feature pip commands and stop with "Re-run /vp-eval after installing."
+On D: drop the relevant inputs (e.g. unset `REFERENCE_TEXT` if `wer` is missing) so the orchestrator skips that component cleanly. Continue.
+
 ### Step 3: Run the full eval
 
 ```bash

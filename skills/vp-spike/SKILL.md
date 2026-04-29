@@ -142,12 +142,39 @@ Show the user the plan and confirm:
 
 If B: set `OUTCOME=abort` and jump to Telemetry.
 
-### Step 5: Execute
+### Step 4.5: Dependency check (run BEFORE invoking B1)
 
-For each variant, run the B1 recipe directly:
+`vpstack-b1` needs `numpy scipy soundfile`. Probe before running so the user gets a clean install prompt instead of an opaque `DEPS_MISSING` JSON:
 
 ```bash
-python3 /tmp/vp_b1_run.py \
+DEPS_BIN=~/.claude/skills/vpstack/bin/vpstack-deps
+[ -x "$DEPS_BIN" ] || DEPS_BIN=.claude/skills/vpstack/bin/vpstack-deps
+DEPS_PKGS=$($DEPS_BIN packages b1)
+DEPS_OK=0
+$DEPS_BIN check b1 >/dev/null 2>&1 && DEPS_OK=1
+```
+
+If `DEPS_OK=0`, ask via AskUserQuestion **before** installing — never silently mutate the user's Python environment:
+
+> **B1 (vpstack-b1) needs Python packages that aren't installed yet:**
+> `<DEPS_PKGS>`
+>
+> A) Install now (`pip install --user <pkgs>` — sandboxed to `~/.local`, no sudo)
+> B) I'll install manually — pause this skill
+> C) Cancel the spike
+>
+> Recommendation: A unless you manage Python in a venv. If you're in a venv, choose B and run `pip install <pkgs>` yourself, then re-invoke `/vp-spike`.
+
+On A: `$DEPS_BIN install b1`. If it fails, surface stderr and stop.
+On B: stop with "Re-run /vp-spike after `pip install $DEPS_PKGS`."
+On C: set `OUTCOME=abort` and jump to Telemetry.
+
+### Step 5: Execute
+
+For each variant, run `vpstack-b1` directly:
+
+```bash
+~/.claude/skills/vpstack/bin/vpstack-b1 \
   --data_path "$VARIANT_DATA_PATH" \
   --output_format json \
   --seed 42
@@ -155,9 +182,9 @@ python3 /tmp/vp_b1_run.py \
 
 Capture stdout and exit code for each variant.
 
-- Exit 0: anonymization succeeded. Parse JSON from stdout: `{config_hash, n_files_anonymized, output_dir}`.
-- Exit 2: `BASELINE_NOT_IMPLEMENTED` — anonymization ran but eval pipeline is pending. Parse the JSON error from stdout. Mark variant as `INCONCLUSIVE` with note "eval pipeline not yet implemented; anonymized audio is in output_dir".
+- Exit 0: anonymization succeeded. Parse JSON from stdout: `{ok, n_files, output_dir, config_hash}`.
 - Exit 1: real error. Read stderr. Mark variant as `FAILED`. Continue with remaining variants.
+- Note: `vpstack-b1` no longer returns a `BASELINE_NOT_IMPLEMENTED` exit-2 — it actually anonymizes. Pair with `/vp-attack` (or `/vp-eval`) to get EER/WER scoring.
 
 Report progress to the user after each variant: "Variant <N>/<total>: done. Exit code: <code>."
 

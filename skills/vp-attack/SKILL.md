@@ -91,6 +91,37 @@ If user picks A or D and there is no anonymized train-clean-360 yet, warn via As
 
 Record the chosen condition(s) as `CONDITION` (one of: `ignorant`, `lazy_informed`, `semi_informed`). For option D, run the steps below three times in order: ignorant → lazy_informed → semi_informed.
 
+### Step 2.5: Dependency check (run BEFORE invoking the attacker)
+
+`vpstack-score --backend speechbrain` needs `speechbrain torch torchaudio`. Probe before running:
+
+```bash
+DEPS_BIN=~/.claude/skills/vpstack/bin/vpstack-deps
+[ -x "$DEPS_BIN" ] || DEPS_BIN=.claude/skills/vpstack/bin/vpstack-deps
+DEPS_PKGS=$($DEPS_BIN packages score)
+DEPS_OK=0
+$DEPS_BIN check score >/dev/null 2>&1 && DEPS_OK=1
+```
+
+If `DEPS_OK=0` and the user picked the SpeechBrain backend, ask via AskUserQuestion **before** any pip mutation:
+
+> **The ECAPA-TDNN attacker needs Python packages that aren't installed yet:**
+> `<DEPS_PKGS>`
+>
+> Note: the first run also downloads `speechbrain/spkrec-ecapa-voxceleb` (~30 MB) to `~/.vpstack/cache/spkrec-ecapa/`. The semi-informed condition additionally needs the trained ASV checkpoint that the user retrained on anonymized train-clean-360.
+>
+> A) Install now (`pip install --user <pkgs>` — sandboxed to `~/.local`, no sudo)
+> B) I'll install manually — pause this skill
+> C) Switch to `--backend external` and provide my own attacker script
+>
+> Recommendation: A for the in-the-box ECAPA. C if you have the official VP2026 attacker installed already and want to drive it instead.
+
+On A: `$DEPS_BIN install score`. If it fails, surface stderr and stop.
+On B: stop with "Re-run /vp-attack after `pip install $DEPS_PKGS`."
+On C: ask for the external script path; vpstack-score will subprocess it without needing speechbrain.
+
+Skip this step if the user picked the external backend in Step 2.
+
 ### Step 3: Run the attacker
 
 Use `vpstack-score` — it wraps SpeechBrain's pretrained ECAPA-TDNN by default and gives a structured JSON result. Two backends:

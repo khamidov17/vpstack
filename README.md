@@ -156,10 +156,18 @@ You:    /vp-ship
 ```bash
 git clone https://github.com/khamidov17/vpstack.git ~/.claude/skills/vpstack
 chmod +x ~/.claude/skills/vpstack/bin/*
-pip install soundfile scipy numpy           # for vpstack-b1
-pip install speechbrain torch torchaudio    # for vpstack-score, vpstack-b2 (pool-selection)
-pip install openai-whisper                  # for vpstack-wer
-pip install speechmos                       # for vpstack-utmos
+```
+
+**You don't have to pre-install the ML deps.** Skills that drive an ML binary (`vpstack-b1`, `vpstack-score`, `vpstack-wer`, `vpstack-utmos`, `vpstack-b2`) probe their Python packages first and prompt before installing — `pip install --user` so it's sandboxed to your home directory, no sudo. Pick which components you want and the skill asks one question per component.
+
+If you'd rather pre-install everything up front:
+
+```bash
+~/.claude/skills/vpstack/bin/vpstack-deps list           # see status of every component
+~/.claude/skills/vpstack/bin/vpstack-deps install b1     # numpy scipy soundfile
+~/.claude/skills/vpstack/bin/vpstack-deps install score  # speechbrain torch torchaudio
+~/.claude/skills/vpstack/bin/vpstack-deps install wer    # openai-whisper torch
+~/.claude/skills/vpstack/bin/vpstack-deps install utmos  # speechmos torch torchaudio
 ```
 
 Restart Claude Code. Open a voice-anonymization project. Type `/vp-hypothesis`.
@@ -236,6 +244,7 @@ The skills call these directly. You can also use them standalone:
 | `vpstack-eval` | Full VP2026 scorecard orchestrator — calls score/wer/utmos and writes the official submission CSV layout (`exp/asv_anon*/`, `exp/asr/`, `exp/ser/`, `exp/results_summary/track1/`) |
 | `vpstack-lock` | Generate/verify `checkpoints.lock` for hash-pinned reproducibility |
 | `vpstack-brain` | Experiment store CLI: `list`, `top`, `show`, `diff`, `query`, `stats`, `learnings`, `timeline`, `projects`. `--slug <name>` for cross-project queries |
+| `vpstack-deps` | Per-feature ML dependency manager: `check`, `install`, `list`, `packages` for `b1` / `score` / `wer` / `utmos` / `b2-pool`. Skills probe before invoking a binary so the user gets a clean install prompt instead of `DEPS_MISSING` JSON |
 | `vpstack-slug` | Project slug (basename + USER-scoped hash) — matches storage paths |
 | `vpstack-skill-init` | Skill preamble logic — activation gate, learnings load, routing injection |
 | `vpstack-detect` | Detects voice-anonymization projects |

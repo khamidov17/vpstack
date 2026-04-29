@@ -4,6 +4,12 @@ All notable changes to vpstack are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added (dependency manager + skill prompts, 2026-04-29)
+- **`bin/vpstack-deps`** — runtime dependency manager for the ML binaries. Subcommands: `check <feature>` (probe imports), `install <feature>` (run pip install, picks `--user` outside venv), `list` (status of every feature), `packages <feature>` (emit pip args). Features map to ML binary capabilities: `b1` → `numpy scipy soundfile`, `score` → `speechbrain torch torchaudio`, `wer` → `openai-whisper torch`, `utmos` → `speechmos torch torchaudio`, `b2-pool` → `speechbrain torch torchaudio`, `b2-sbvc` → `speechbrain>=0.5.16 torch torchaudio`.
+- **Skills now prompt before pip install.** `/vp-spike`, `/vp-attack`, `/vp-baseline-compare`, `/vp-eval` each probe `vpstack-deps check <feature>` before invoking a binary. If a package is missing, the skill surfaces the exact pip command and asks via `AskUserQuestion` (Install / Manual / Skip) — never silently mutates the user's Python environment. Replaces the previous behavior where the binary returned an opaque `DEPS_MISSING` JSON and the user had to figure out what to run.
+- **README install section rewritten.** The pre-flight `pip install` block is gone — users no longer need to install everything up front. Skills install only what's needed, on demand, after the user agrees. The "pre-install everything" alternative is documented via `vpstack-deps install` for users who prefer batch setup.
+- **`/vp-spike` Step 5 — replaced dead `/tmp/vp_b1_run.py` reference with `vpstack-b1`.** The skill was still telling Claude to run an inlined script that hasn't existed since v0.2; now it shells to the real binary. Also dropped the `BASELINE_NOT_IMPLEMENTED` (exit 2) handling — `vpstack-b1` actually anonymizes, that exit code was a v0.1 stub.
+
 ### Added (full eval pipeline + B2 wrapper, 2026-04-29)
 - **`vpstack-wer`** — ASR Word-Error-Rate scoring via OpenAI Whisper. Configurable model (`tiny.en` / `base.en` / `small.en` / `medium.en` / `large`), TSV reference manifest, edit-distance WER (own implementation, no `jiwer` dep), per-file + overall, JSON or human output. ~150 lines bash + python.
 - **`vpstack-utmos`** — Naturalness PMOS scoring via UTMOS22 (Saeki et al. Interspeech 2022, arXiv:2204.02152) using the `speechmos` package. Per-file + mean/std/min/max, JSON or human. Direction reminder built in (higher = more natural).

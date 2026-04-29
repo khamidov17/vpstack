@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# vpstack-deps — runtime dependency manager for the ML binaries.
+#
+# Each vpstack ML binary (vpstack-b1, vpstack-score, vpstack-wer,
+# vpstack-utmos, vpstack-b2) needs Python packages that vpstack does NOT
+# bundle (per CLAUDE.md "no Python packages in repo" rule). Skills probe
+# this helper before invoking a binary so the user can install what's
+# missing instead of hitting an opaque DEPS_MISSING JSON.
+#
+# Subcommands:
+#   vpstack-deps check <feature>     Probe imports for <feature>.
+#                                    Exit 0 if all importable, 1 if any
+#                                    missing. Stderr lists what's missing.
+#   vpstack-deps install <feature>   Run pip install for the packages
+#                                    backing <feature>. Uses --user if not
+#                                    in a venv. Asks pip, not the user —
+#                                    skill is expected to AskUserQuestion
+#                                    before calling install.
+#   vpstack-deps list                Print every feature → packages mapping
+#                                    plus current import status (ok|missing).
+#   vpstack-deps packages <feature>  Print the pip install command line
+#                                    for <feature>. Useful for skills that
+#                                    want to surface the command before
+#                                    asking the user.
+#
+# Features (one per ML binary capability):
+#   b1            B1 McAdams anonymization               numpy scipy soundfile
+#   score         ASV attacker (SpeechBrain ECAPA)       speechbrain torch torchaudio
+#   wer           Whisper-based ASR WER                  openai-whisper torch
+#   utmos         UTMOS22 PMOS scoring                   speechmos torch torchaudio
+#   b2-pool       B2 pool-selection backend              speechbrain torch torchaudio
+#   b2-sbvc       B2 speechbrain-vc (experimental)       speechbrain (>=0.5.16) torch torchaudio
+#
+# Notes:
+#   - vpstack does NOT pip install on its own. Skills must AskUserQuestion
+#     before calling `vpstack-deps install`. Silent installs would violate
+#     the activation/silence contract for non-voice projects.
+#   - Pinned versions are NOT enforced — researchers want flexibility. We
+#     install the latest compatible by default.
+
+set -euo pipefail
+
+SUBCMD="${1:-help}"
+shift || true
+
+# Feature → import probe (python module name, NOT pip name) and pip packages.
+# import_for_<feat> echoes the python -c probe.
+# pip_for_<feat>    echoes the pip install argument list.
+import_for() {
+  case "$1" in
+    b1)       echo "import numpy, scipy, soundfile" ;;
+    score)    echo "import torch, torchaudio, speechbrain" ;;
+    wer)      echo "import torch, whisper" ;;
+    utmos)    echo "import torch, torchaudio, speechmos" ;;
+    b2-pool)  echo "import torch, torchaudio, speechbrain" ;;
+    b2-sbvc)  echo "import torch, torchaudio, speechbrain" ;;
+    *) return 1 ;;
+  esac
+}
+pip_for() {
+  case "$1" in
+    b1)       echo "numpy scipy soundfile" ;;
+    score)    echo "speechbrain torch torchaudio" ;;
+    wer)      echo "openai-whisper torch" ;;
+    utmos)    echo "speechmos torch torchaudio" ;;
+    b2-pool)  echo "speechbrain torch torchaudio" ;;
+    b2-sbvc)  echo "speechbrain>=0.5.16 torch torchaudio" ;;
+    *) return 1 ;;
+  esac
+}
+features="b1 score wer utmos b2-pool b2-sbvc"
+
+probe() {
+  local feat="$1"
+  local probe; probe=$(import_for "$feat") || { echo "Unknown feature: $feat" >&2; return 2; }
+  python3 -c "$probe" 2>/dev/null
+}
+
+cmd_check() {
+  local feat="${1:-}"
+  [ -z "$feat" ] && { echo "Usage: vpstack-deps check <feature>" >&2; return 2; }
+  if probe "$feat"; then
+    echo "vpstack-deps: $feat OK"
+    return 0
+  else
+    local pkgs; pkgs=$(pip_for "$feat") || return 2
+    echo "vpstack-deps: $feat MISSING — needs: $pkgs" >&2
+    echo "vpstack-deps: install with: vpstack-deps install $feat" >&2
+    return 1
+  fi
+}
+
+cmd_packages() {
+  local feat="${1:-}"
+  [ -z "$feat" ] && { echo "Usage: vpstack-deps packages <feature>" >&2; return 2; }
+  pip_for "$feat" || { echo "Unknown feature: $feat" >&2; return 2; }
+}
+
+cmd_install() {
+  local feat="${1:-}"
+  [ -z "$feat" ] && { echo "Usage: vpstack-deps install <feature>" >&2; return 2; }
+  local pkgs; pkgs=$(pip_for "$feat") || { echo "Unknown feature: $feat" >&2; return 2; }
+
+  # Decide whether to add --user. Inside a venv (VIRTUAL_ENV) or conda env
+  # (CONDA_PREFIX), do NOT add --user — pip will refuse with --user inside
+  # a venv. Otherwise add --user so we never need sudo.
+  local user_flag="--user"
+  if [ -n "${VIRTUAL_ENV:-}" ] || [ -n "${CONDA_PREFIX:-}" ]; then
+    user_flag=""
+  fi
+
+  echo "vpstack-deps: pip install $user_flag $pkgs" >&2
+  # shellcheck disable=SC2086
+  python3 -m pip install $user_flag $pkgs
+  # Re-probe to confirm
+  if probe "$feat"; then
+    echo "vpstack-deps: $feat now OK" >&2
+    return 0
+  else
+    echo "vpstack-deps: install ran but probe still failing — check pip output above" >&2
+    return 1
+  fi
+}
+
+cmd_list() {
+  printf "%-10s %-8s %s\n" "FEATURE" "STATUS" "PIP PACKAGES"
+  printf "%-10s %-8s %s\n" "-------" "------" "------------"
+  for feat in $features; do
+    local status="ok"
+    probe "$feat" 2>/dev/null || status="missing"
+    printf "%-10s %-8s %s\n" "$feat" "$status" "$(pip_for "$feat")"
+  done
+}
+
+cmd_help() {
+  sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+}
+
+case "$SUBCMD" in
+  check)    cmd_check    "$@" ;;
+  install)  cmd_install  "$@" ;;
+  packages) cmd_packages "$@" ;;
+  list)     cmd_list ;;
+  -h|--help|help) cmd_help ;;
+  *) echo "Unknown subcommand: $SUBCMD. Run 'vpstack-deps help'." >&2; exit 1 ;;
+esac

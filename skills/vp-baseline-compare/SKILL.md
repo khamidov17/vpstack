@@ -215,6 +215,33 @@ Also validate alpha if the user is not using the default:
 
 **B1 is signal-processing only — no neural models, no GPU needed.**
 
+#### Step 4.0: Dependency check (run BEFORE invoking B1)
+
+```bash
+DEPS_BIN=~/.claude/skills/vpstack/bin/vpstack-deps
+[ -x "$DEPS_BIN" ] || DEPS_BIN=.claude/skills/vpstack/bin/vpstack-deps
+DEPS_PKGS=$($DEPS_BIN packages b1)
+DEPS_OK=0
+$DEPS_BIN check b1 >/dev/null 2>&1 && DEPS_OK=1
+```
+
+If `DEPS_OK=0`, ask via AskUserQuestion **before** any pip mutation:
+
+> **B1 (vpstack-b1) needs Python packages that aren't installed yet:**
+> `<DEPS_PKGS>`
+>
+> A) Install now (`pip install --user <pkgs>`, sandboxed to `~/.local`)
+> B) I'll install manually — pause this skill
+> C) Cancel the comparison
+>
+> Recommendation: A. These are small, common scientific-Python packages. Choose B only if you manage Python in a venv (active in this shell).
+
+On A: `$DEPS_BIN install b1`. If it fails, surface stderr and stop.
+On B: stop with "Re-run /vp-baseline-compare after `pip install $DEPS_PKGS`."
+On C: set `OUTCOME=abort`.
+
+#### Step 4.1: Run B1
+
 Use the `vpstack-b1` binary directly:
 
 ```bash
@@ -222,8 +249,6 @@ Use the `vpstack-b1` binary directly:
 ```
 
 It produces JSON on stdout: `{"ok": true, "n_files": N, "output_dir": "...", "config_hash": "..."}`. Parse it for the leaderboard table.
-
-If `pip install soundfile scipy numpy` is missing, the binary returns `{"ok": false, "error": {"code": "DEPS_MISSING"}}` — surface this clearly to the user.
 
 **Reference implementation (skip this section unless you need to debug or extend B1).** The McAdams algorithm is implemented inside `vpstack-b1`. If you want to inspect or modify it, read the script directly: `~/.claude/skills/vpstack/bin/vpstack-b1`. The algorithm is a single Python heredoc within that bash file — Patino et al. VP2020 reference, VP2026 Eval Plan parameters (alpha=0.8, frame_length=20ms, hop=10ms, lpc_order=20).
 
@@ -342,7 +367,7 @@ Ask via AskUserQuestion:
 >
 > Recommendation: A if you've installed the official VP2026 B2 recipe and want canonical numbers. B for a quick "how would speaker selection do" sanity check. C if you're iterating on the user system and don't need a B2 column right now.
 
-If A: ask for the recipe path and target speaker pool path, then run:
+If A: ask for the recipe path and target speaker pool path. The external recipe is the user's responsibility — its dependencies are not vpstack's concern. Run:
 ```bash
 ~/.claude/skills/vpstack/bin/vpstack-b2 \
   --backend external \
@@ -354,7 +379,27 @@ If A: ask for the recipe path and target speaker pool path, then run:
 ```
 Parse stdout JSON for `output_dir` and `config_hash`. The `output_dir` is what the comparison table will reference and what `/vp-attack` should run on for B2 EER.
 
-If B: skip the recipe path; the call is the same minus `--recipe_path` and with `--backend pool-selection`. Surface the resulting `anon_targets.json` location to the user — they need a downstream vocoder to actually anonymize audio with this method. The B2 row in the table shows method label only, not EER/WER.
+If B: dependency check first — `pool-selection` needs ECAPA via SpeechBrain:
+
+```bash
+$DEPS_BIN check b2-pool >/dev/null 2>&1 || {
+  PKGS=$($DEPS_BIN packages b2-pool)
+  # Ask user via AskUserQuestion same shape as Step 4.0
+  # Then $DEPS_BIN install b2-pool on approval
+}
+```
+
+After deps are in place, the call is:
+```bash
+~/.claude/skills/vpstack/bin/vpstack-b2 \
+  --backend pool-selection \
+  --data_path "$DATA_PATH" \
+  --output_dir "$DATA_PATH/anon_b2" \
+  --target_speaker_pool "$TARGET_POOL" \
+  --seed 42 --output_format json
+```
+
+Surface the resulting `anon_targets.json` location to the user — they need a downstream vocoder to actually anonymize audio with this method. The B2 row in the table shows method label only, not EER/WER.
 
 ### Step 5: Build the delta table
 
