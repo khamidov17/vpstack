@@ -157,7 +157,9 @@ You:    /vp-ship
 git clone https://github.com/khamidov17/vpstack.git ~/.claude/skills/vpstack
 chmod +x ~/.claude/skills/vpstack/bin/*
 pip install soundfile scipy numpy           # for vpstack-b1
-pip install speechbrain torch torchaudio    # for vpstack-score (optional, only if you need EER)
+pip install speechbrain torch torchaudio    # for vpstack-score, vpstack-b2 (pool-selection)
+pip install openai-whisper                  # for vpstack-wer
+pip install speechmos                       # for vpstack-utmos
 ```
 
 Restart Claude Code. Open a voice-anonymization project. Type `/vp-hypothesis`.
@@ -227,7 +229,11 @@ The skills call these directly. You can also use them standalone:
 | Binary | Purpose |
 |---|---|
 | `vpstack-b1` | McAdams B1 anonymization on any WAV directory. CPU only, ~5min for dev set |
+| `vpstack-b2` | Neural B2 wrapper. `--backend external` (drives your VP2026 B2 recipe), `--backend pool-selection` (ECAPA farthest-neighbor target speakers), `--backend speechbrain-vc` (experimental) |
 | `vpstack-score` | ASV attacker — wraps SpeechBrain ECAPA or your own external attacker |
+| `vpstack-wer` | ASR Word-Error-Rate scoring via OpenAI Whisper, against a TSV reference manifest |
+| `vpstack-utmos` | Naturalness PMOS scoring via UTMOS22 (sarulab-speech / SpeechMOS) |
+| `vpstack-eval` | Full VP2026 scorecard orchestrator — calls score/wer/utmos and writes the official submission CSV layout (`exp/asv_anon*/`, `exp/asr/`, `exp/ser/`, `exp/results_summary/track1/`) |
 | `vpstack-lock` | Generate/verify `checkpoints.lock` for hash-pinned reproducibility |
 | `vpstack-brain` | Experiment store CLI: `list`, `top`, `show`, `diff`, `query`, `stats`, `learnings`, `timeline`, `projects`. `--slug <name>` for cross-project queries |
 | `vpstack-slug` | Project slug (basename + USER-scoped hash) — matches storage paths |
@@ -258,8 +264,10 @@ Run any of them with `--help` for usage.
 | Context save/restore | ✅ Resume mid-experiment from any session |
 | Activation auto-detect | ✅ VP2026 projects fire, others stay silent |
 | Claude Code / Codex / Cursor | ✅ All three clients, same skills, same binaries |
-| B2 neural baseline (HuBERT + ECAPA + HiFi-GAN) | ⏳ v0.4 — use the official VP2026 challenge B2 recipe today |
-| Full bundled eval pipeline | ⏳ v0.4 — today: `vpstack-score` for EER, Whisper for WER, UTMOS for PMOS |
+| B2 neural baseline wrapper (`vpstack-b2`) | ✅ Three backends: `external` (drive the VP2026 B2 recipe), `pool-selection` (ECAPA farthest-neighbor), `speechbrain-vc` (experimental) |
+| WER scoring (`vpstack-wer`) | ✅ Whisper-based, configurable model size, edit-distance WER against a TSV manifest |
+| Naturalness PMOS scoring (`vpstack-utmos`) | ✅ UTMOS22 via SpeechMOS package |
+| Full eval orchestrator (`vpstack-eval`) | ✅ Runs score/wer/utmos in one shot, writes VP2026 submission CSVs + optional ZIP |
 
 ---
 

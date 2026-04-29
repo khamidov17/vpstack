@@ -328,7 +328,33 @@ python3 /tmp/vp_b1_run.py --data_path "$DATA_PATH" --seed 42
 
 </details>
 
-**B2 note:** B2 (HuBERT + ECAPA-TDNN + HiFi-GAN) is not yet part of vpstack. Tell the user: "B2 requires downloading pretrained models and a GPU. The VP2026 challenge provides the official B2 recipe at voiceprivacychallenge.org." B2 column shows "—" in the table.
+### Step 4.5: Optionally run B2 baseline
+
+**B2 (HuBERT + ECAPA + HiFi-GAN) is wrapped via `vpstack-b2`.** vpstack does not vendor the official VP2026 B2 recipe (GPLv3) — instead, the wrapper drives whatever B2 implementation the user has installed.
+
+Ask via AskUserQuestion:
+
+> **Include B2 in the comparison?**
+>
+> A) Yes — drive my installed VP2026 B2 recipe via `vpstack-b2 --backend external`
+> B) Yes — use `--backend pool-selection` (ECAPA farthest-neighbor target selection; produces a target-speaker manifest, not waveforms)
+> C) No — B1 only
+>
+> Recommendation: A if you've installed the official VP2026 B2 recipe and want canonical numbers. B for a quick "how would speaker selection do" sanity check. C if you're iterating on the user system and don't need a B2 column right now.
+
+If A: ask for the recipe path and target speaker pool path, then run:
+```bash
+~/.claude/skills/vpstack/bin/vpstack-b2 \
+  --backend external \
+  --recipe_path "$RECIPE_PATH" \
+  --data_path "$DATA_PATH" \
+  --output_dir "$DATA_PATH/anon_b2" \
+  --target_speaker_pool "$TARGET_POOL" \
+  --seed 42 --output_format json
+```
+Parse stdout JSON for `output_dir` and `config_hash`. The `output_dir` is what the comparison table will reference and what `/vp-attack` should run on for B2 EER.
+
+If B: skip the recipe path; the call is the same minus `--recipe_path` and with `--backend pool-selection`. Surface the resulting `anon_targets.json` location to the user — they need a downstream vocoder to actually anonymize audio with this method. The B2 row in the table shows method label only, not EER/WER.
 
 ### Step 5: Build the delta table
 

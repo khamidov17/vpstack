@@ -1,12 +1,16 @@
 ---
 name: vp-eval
-version: 0.1.0-dev
+version: 0.3.0-dev
 description: |
-  Run the full VP2026 evaluation pipeline (EER + WER + linkability + side-channel scores) on the
-  user's anonymization system. Validates submission format. Use when preparing a challenge submission
-  or generating publication-grade numbers. Distinct from /vp-baseline-compare — this is the full eval,
-  not a comparison. (vpstack)
-  Voice triggers: "full eval", "evaluate", "score my system", "VP2026 eval".
+  Run the full VP2026 evaluation pipeline on an anonymized output: EER per
+  gender split (F-F / M-M / Mixed) via vpstack-score, WER via vpstack-wer
+  (Whisper), naturalness PMOS via vpstack-utmos, and emit the official VP2026
+  submission CSV layout under exp/asv_anon{suffix}/, exp/asr/, exp/ser/,
+  exp/results_summary/track1/. Use when preparing a challenge submission or
+  generating publication-grade numbers. Distinct from /vp-baseline-compare —
+  this is the full eval, not a comparison. (vpstack)
+  Voice triggers: "full eval", "evaluate", "score my system", "VP2026 eval",
+  "submission scorecard".
 allowed-tools:
   - Bash
   - Read
@@ -16,15 +20,7 @@ allowed-tools:
 
 # /vp-eval
 
-Run the VP2026 eval pipeline end-to-end and validate submission format.
-
-**Current implementation status:** The full eval pipeline (EER scoring, WER scoring, linkability, side-channel metrics) is not yet implemented in vpstack. What IS available and runnable right now:
-
-- B1 baseline anonymization (`baseline_B1.run`) — exits 0 on success
-- B2 baseline anonymization (`baseline_B2.run`) — always exits 2 (not yet implemented)
-- Attacker runner (`attacker.run`) — for ASV-based EER estimation
-
-This skill runs what is available, is honest about what is not, and gives the user a manual checklist for submission validation.
+Run the VP2026 eval pipeline end-to-end via the `vpstack-eval` orchestrator. Produces VP2026-format submission CSVs (per Eval Plan v1, HAL hal-05561895, Tables 8-9).
 
 ## Preamble (run first)
 
@@ -33,196 +29,134 @@ eval "$(~/.claude/skills/vpstack/bin/vpstack-skill-init vp-eval 2>/dev/null || .
 
 case "$ACTIVATION" in
   NO_MATCH|DISABLED_EXPLICIT) exit 0 ;;
-  DETECTED_FIRST_RUN) ;;        # Skill body handles AskUserQuestion below
+  DETECTED_FIRST_RUN) ;;
   ENABLED_EXPLICIT|DETECTED_CONFIRMED) ;;
 esac
 
 if [ -n "$UPGRADE_AVAILABLE" ]; then
   echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
 fi
+
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+TEL_START=$(date +%s)
+EXP_ID="eval-$(date +%Y%m%dT%H%M%S)"
+VPSTACK_BIN=~/.claude/skills/vpstack/bin
+[ -d "$VPSTACK_BIN" ] || VPSTACK_BIN=.claude/skills/vpstack/bin
 ```
 
 ## First-run gate
 
-If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion:
-
-> "This project looks like voice-anonymization work (matched: $ACTIVATION_REASON). Enable vpstack here?"
->
-> A) Yes, enable for this project (writes `<repo>/.vpstack/enabled`)
-> B) No, silence vpstack on this project (writes `<repo>/.vpstack/disabled`)
-> C) Ask me again next time
-
-On answer:
-- A → `mkdir -p .vpstack && touch .vpstack/enabled` and proceed
-- B → `mkdir -p .vpstack && touch .vpstack/disabled` and exit silently
-- C → `mkdir -p .vpstack && touch .vpstack/ask-later` and exit silently
-
-After A, append the project hash to `~/.vpstack/projects-decided`:
-```bash
-PROJECT_HASH=$(printf '%s' "$PWD" | sha256sum 2>/dev/null | cut -c1-16 || printf '%s' "$PWD" | shasum -a 256 | cut -c1-16)
-echo "$PROJECT_HASH" >> ~/.vpstack/projects-decided
-```
+If `ACTIVATION=DETECTED_FIRST_RUN`, ask once (Yes / No / Ask later) — same shape as `vp-baseline-compare`.
 
 ## Workflow
 
-### Step 1: Resolve slug and timestamps
-
-```bash
-SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-TEL_START=$(date +%s)
-EXP_ID="eval-$(date +%Y%m%dT%H%M%S)"
-```
-
-### Step 2: Locate the system and data
+### Step 1: Locate the system and data
 
 Ask via AskUserQuestion:
 
-> "What do you want to evaluate?"
+> **What do you want to evaluate?**
 >
-> A) Run B1 anonymization on a data directory (and then run the attacker on the output)
-> B) I already have anonymized audio — run the attacker on it directly
-> C) Just validate my submission directory format (no runs)
-
-Ask for the relevant path depending on the answer.
-
-**Test-split protection warning.** If the user's data path contains the word `test`, `eval`, or `heldout` (case-insensitive), warn explicitly:
-
-> "WARNING: The path you provided appears to be the held-out test split. Running eval on test data before your official submission can lead to overfitting your system to the test set, which undermines the challenge integrity. Are you preparing your official submission?"
+> A) Run B1 anonymization first, then full eval on the output (start-to-finish)
+> B) Eval a directory of already-anonymized audio
+> C) Re-emit the submission CSV/ZIP from a prior eval run (no re-scoring)
 >
-> A) Yes, this is my official submission run  B) No, switch to dev set
+> Recommendation: B if you've already anonymized; A if you're benchmarking against B1; C only if you've already done the heavy lifting and just need the submission archive regenerated.
 
-If the user answers B, ask for the dev set path instead. If A, proceed but include `"official_run": true` in the experiment log.
+Collect paths:
 
-### Step 3: Run B1 anonymization (if applicable)
+- `$ANONYMIZED_PATH` — directory of anonymized 16kHz mono WAVs (auto-derived from B1 output_dir if option A)
+- `$ENROLLMENT_PATH` — original-speaker enrollment WAVs (required for ASV/EER scoring)
+- `$TRIAL_LIST_FF`, `$TRIAL_LIST_MM`, `$TRIAL_LIST_MIXED` — VP2026 trial files (any subset; eval only what's provided)
+- `$REFERENCE_TEXT` — TSV manifest `filename<TAB>transcription` for WER (optional)
+- `$OUTPUT_DIR` — where the VP2026 submission tree gets written (default: `~/.vpstack/projects/$SLUG/experiments/$EXP_ID/`)
+- `$SYSTEM_SUFFIX` — appears in CSV/ZIP names, e.g. `_ohnn-v3` (default: `_yoursystem`)
 
-If the user chose option A in Step 2, run:
+**Test-split protection.** If any path contains `test`, `eval`, or `heldout` (case-insensitive), warn:
+
+> **WARNING:** Path contains "test/eval/heldout" — running eval on the held-out test split before official submission risks overfitting your system to the test set. Are you preparing your official submission?
+>
+> A) Yes — official submission run  B) No — switch to dev set
+>
+> Recommendation: B unless you're literally about to upload. Tag the experiment with `official_run: true` only if A.
+
+### Step 2: Run B1 first if option A
 
 ```bash
-python3 /tmp/vp_b1_run.py \
+~/.claude/skills/vpstack/bin/vpstack-b1 \
   --data_path "$DATA_PATH" \
   --output_format json \
   --seed 42
 ```
 
-- Exit 0: parse stdout JSON. The `output_dir` field is the anonymized audio path to pass to the attacker.
-- Exit 2: `BASELINE_NOT_IMPLEMENTED` — anonymization ran but eval pipeline is pending. Parse `output_dir` from the JSON error payload (it is still populated). Continue to the attacker with that path. Note this to the user.
-- Exit 1: real error. Read stderr, report to user. Set `OUTCOME=error` and stop.
+Parse stdout JSON; set `$ANONYMIZED_PATH=$(jq -r .output_dir <<<"$B1_OUT")`.
 
-### Step 4: Run the attacker
-
-Run the attacker against the anonymized audio. Inform the user: "Running the semi-informed ASV attacker. This can take 30-90 minutes on a single GPU."
+### Step 3: Run the full eval
 
 ```bash
-# see /vp-attack skill for attacker command \
+mkdir -p "$OUTPUT_DIR"
+$VPSTACK_BIN/vpstack-eval \
   --anonymized_path "$ANONYMIZED_PATH" \
-  --enrollment_path "$ENROLLMENT_PATH" \
-  --trial_list "$TRIAL_LIST" \
-  --attacker_condition semi_informed \
-  --output_format json \
-  --seed 42
+  --output_dir      "$OUTPUT_DIR" \
+  ${ENROLLMENT_PATH:+--enrollment_path "$ENROLLMENT_PATH"} \
+  ${TRIAL_LIST_FF:+--trial_list_FF "$TRIAL_LIST_FF"} \
+  ${TRIAL_LIST_MM:+--trial_list_MM "$TRIAL_LIST_MM"} \
+  ${TRIAL_LIST_MIXED:+--trial_list_Mixed "$TRIAL_LIST_MIXED"} \
+  ${REFERENCE_TEXT:+--reference_text "$REFERENCE_TEXT"} \
+  --condition semi_informed \
+  --asv_backend speechbrain \
+  --whisper_model base.en \
+  --system_suffix "$SYSTEM_SUFFIX" \
+  --seed 42 \
+  --output_format json
 ```
 
-Before running, ask the user for:
-- `--enrollment_path`: path to enrollment audio (original speaker samples used by the attacker)
-- `--trial_list`: path to the VP2026 trial list file
+Inform the user: "Full VP2026 eval — semi-informed ASV is the official ranking attacker. Expect 30-90 min on a single GPU for ASV + 10-30 min for WER + 5 min for UTMOS, depending on n_files and model size."
 
-Parse stdout JSON on success. Key fields: `eer`, `eer_male`, `eer_female`, `attacker_condition`.
+The orchestrator runs only the components for which inputs were provided. Components that fail (e.g. missing whisper deps) are reported as `skipped` and the rest continue.
 
-Metric reminder: **EER higher = more private.** A random-chance attacker scores ~50% EER. The goal is to approach 50%.
+Parse the resulting JSON. Extract:
+- `metrics.eer_F_F`, `metrics.eer_M_M`, `metrics.eer_Mixed`
+- `metrics.wer_overall`
+- `metrics.pmos_mean`
+- `components_ran` map
+- `submission_summary_csv` path
+- `submission_zip` path (if `--make_zip` was used; offer in Step 4)
 
-If the attacker exits non-zero, report stderr to the user. Set `OUTCOME=error`.
+### Step 4: Offer the submission ZIP
 
-### Step 5: Submission format checklist (bash)
+If the user wants the bundled submission archive:
 
-Run this checklist manually regardless of which option the user chose. This replaces the former `vp_check_submission` MCP tool.
+> **Bundle the eval into a submission ZIP?**
+>
+> A) Yes — re-run vpstack-eval with `--make_zip` to produce `result_for_submission${SYSTEM_SUFFIX}.zip`
+> B) No, the CSVs are enough for now
+>
+> Recommendation: A if you're at the official-submission stage; B during iteration.
 
-```bash
-SUBMISSION_DIR="$OUTPUT_DIR"  # or the user's provided path
-
-echo "=== VP2026 Submission Format Checklist ==="
-
-# 1. Check required top-level structure
-for required in trial_results system_description.json; do
-  if [ -e "$SUBMISSION_DIR/$required" ]; then
-    echo "  [OK]  $required exists"
-  else
-    echo "  [MISSING]  $required — required for submission"
-  fi
-done
-
-# 2. Check EER result file
-EER_FILE="$SUBMISSION_DIR/trial_results/dev/eer.json"
-if [ -f "$EER_FILE" ]; then
-  echo "  [OK]  eer.json exists"
-  # Validate expected keys
-  python3 -c "
-import json, sys
-with open('$EER_FILE') as f:
-    d = json.load(f)
-required = {'male', 'female', 'overall'}
-missing = required - set(d.keys())
-if missing:
-    print('  [ERROR]  eer.json missing keys:', missing)
-else:
-    print('  [OK]  eer.json has required keys: male, female, overall')
-    print('         Values:', d)
-" 2>&1
-else
-  echo "  [MISSING]  trial_results/dev/eer.json"
-fi
-
-# 3. Check system description
-SYS_DESC="$SUBMISSION_DIR/system_description.json"
-if [ -f "$SYS_DESC" ]; then
-  echo "  [OK]  system_description.json exists"
-else
-  echo "  [MISSING]  system_description.json — describe your system components here"
-fi
-
-# 4. Check for any audio left in submission (should be scores only)
-WAV_COUNT=$(find "$SUBMISSION_DIR" -name '*.wav' 2>/dev/null | wc -l)
-if [ "$WAV_COUNT" -gt 0 ]; then
-  echo "  [WARN]  Found $WAV_COUNT .wav files in submission dir — submissions should contain scores, not audio"
-else
-  echo "  [OK]  No audio files in submission (correct)"
-fi
-
-echo "=== End of checklist ==="
-```
-
-Report the checklist output to the user. For each `[MISSING]` or `[ERROR]` item, explain what is needed and how to fix it.
-
-### Step 6: Present results
+### Step 5: Present results
 
 ```
-VP2026 Evaluation Results
-=========================
-Eval set:       <dev|test>
-Seed:           42
-System:         <path>
-EXP ID:         <EXP_ID>
+VP2026 Eval — system$SYSTEM_SUFFIX (condition=semi_informed, seed=42)
+================================================================
+EER F-F:    <value>%   (↑ = more private, 50% = random)
+EER M-M:    <value>%
+EER Mixed:  <value>%
+WER:        <value>%   (↓ = more useful, 0% = perfect)
+PMOS:       <value>    (↑ = more natural, 1=bad / 5=excellent)
 
-Attacker condition: semi-informed (official ranking condition)
+Components ran: <list of true>
+Components skipped: <list of false> [reason]
 
-| Metric              | Value        |
-|---------------------|--------------|
-| EER % (overall)     | <eer or N/A> |
-| EER % (male)        | <or N/A>     |
-| EER % (female)      | <or N/A>     |
-| WER %               | not yet impl.|
-| Linkability         | not yet impl.|
-
-Note: EER higher = more private. Random-chance ceiling = 50%.
-Note: WER and linkability scoring are not yet implemented in vpstack.
-      Run your own ASR eval to compute WER.
-
-Submission validation: <PASS|FAIL|PARTIAL — list issues>
-Output directory: ~/.vpstack/projects/<slug>/experiments/<EXP_ID>/
+CSVs:
+  $OUTPUT_DIR/exp/asv_anon$SYSTEM_SUFFIX/eer_*.csv
+  $OUTPUT_DIR/exp/asr/wer.csv
+  $OUTPUT_DIR/exp/ser/utmos.csv
+  $OUTPUT_DIR/exp/results_summary/track1/result_for_submission$SYSTEM_SUFFIX.csv
+Submission ZIP (if made): result_for_submission$SYSTEM_SUFFIX.zip
 ```
 
-### Step 7: Log experiment
+### Step 6: Log experiment
 
-First ensure the directory exists:
 ```bash
 mkdir -p ~/.vpstack/projects/$SLUG/experiments/$EXP_ID
 ```
@@ -231,38 +165,50 @@ Use the Write tool to create `~/.vpstack/projects/$SLUG/experiments/$EXP_ID/summ
 
 ```json
 {
-  "exp_id": "<EXP_ID>",
+  "id": "<EXP_ID>",
   "skill": "vp-eval",
-  "timestamp": "<ISO 8601>",
+  "date": "<ISO 8601>",
   "slug": "<SLUG>",
-  "seed": 42,
-  "eval_set": "<dev|test>",
+  "method": "<system_suffix or method label>",
+  "system_name": "<system_suffix>",
+  "hypothesis": "<from /vp-hypothesis if present, else null>",
+  "tags": ["eval", "<official_run if true>"],
+  "config_hash": "<from vpstack-eval JSON>",
   "official_run": false,
-  "b1": {
-    "exit_code": "<0|1|2>",
-    "config_hash": "<or null>",
-    "n_files_anonymized": "<or null>",
-    "output_dir": "<or null>"
+  "metrics": {
+    "eer": "<eer_Mixed or eer_F_F if Mixed missing>",
+    "eer_F_F": "<value or null>",
+    "eer_M_M": "<value or null>",
+    "eer_Mixed": "<value or null>",
+    "wer": "<wer_overall or null>",
+    "pmos": "<pmos_mean or null>"
   },
-  "attacker": {
-    "exit_code": "<or null if not run>",
-    "attacker_condition": "semi_informed",
-    "eer": "<or null>",
-    "eer_male": "<or null>",
-    "eer_female": "<or null>"
-  },
-  "submission_validation": "<PASS|FAIL|PARTIAL>",
-  "submission_issues": []
+  "condition": "semi_informed",
+  "submission_dir": "<OUTPUT_DIR>",
+  "submission_summary_csv": "<path>",
+  "submission_zip": "<path or null>",
+  "components_ran": {"asv_F-F": true, "asv_M-M": true, "asv_Mixed": true, "wer": true, "utmos": true}
 }
 ```
 
-### Step 8: Suggest next steps
+This makes the run discoverable via `vpstack-brain top --metric eer` and `vpstack-brain show <EXP_ID>`.
 
-- If EER from attacker is available and high (approaching 50%): "Strong privacy result. If submission validation passed, bundle `output_dir` as your official submission archive."
-- If EER is low (much below 50%): "Privacy is weaker than expected. Try `/vp-spike` to ablate components."
-- If submission validation failed: "Fix the listed issues and re-run Step 5 manually, or re-run `/vp-eval`."
-- If WER is needed: "WER scoring is not yet in vpstack. Run a standard ASR eval (e.g., `whisper` or `kaldi`) on the anonymized audio in `output_dir`."
-- If running on dev: "When ready for official submission, re-run `/vp-eval` on the test set and confirm the official-run prompt."
+If a confirmed result is worth remembering across sessions (e.g. "with OHNN, semi-informed EER hits 41% on F-F at lambda=0.7"), also log a learning:
+
+```bash
+~/.claude/skills/vpstack/bin/vpstack-learnings-log \
+  --key "<short-kebab-key>" \
+  --insight "<one-sentence finding>" \
+  --source vp-eval --confidence 0.85
+```
+
+### Step 7: Suggest next steps
+
+- High EER, low WER regression: "Strong full-eval result. Run `/vp-repro-check` before citing or submitting."
+- ASV ran but WER didn't (no `--reference_text`): "Provide a TSV manifest of ground-truth transcriptions and re-run to populate the WER column."
+- Test-split run: "If you tagged this as official_run, this is your submission archive. If not, regenerate with `--system_suffix _final` on dev only."
+- Mixed-condition gap (Mixed EER << F-F or M-M): "Cross-gender attacks are landing harder than same-gender — investigate via `/vp-investigate`."
+- If the user wants to compare against B1: "Run `/vp-baseline-compare` to get a side-by-side delta table."
 
 ## Telemetry (run last)
 
@@ -272,10 +218,10 @@ TEL_DUR=$(( TEL_END - TEL_START ))
 ~/.claude/skills/vpstack/bin/vpstack-telemetry-log --skill vp-eval --duration "$TEL_DUR" --outcome "$OUTCOME"
 ```
 
-`OUTCOME`: `success` on full run completing (even with BASELINE_NOT_IMPLEMENTED notes). `error` with `--error-class DATA_MISSING` if required paths are absent. `error` with `--error-class INVALID_CONFIG` on attacker misconfiguration. `abort` if user cancelled at the test-split warning.
+`OUTCOME`: `success` on the orchestrator returning ok=true (even if some components were skipped due to missing inputs). `error` with `--error-class DATA_MISSING` if required paths absent. `error` with `--error-class INVALID_CONFIG` if attacker condition or backend invalid. `abort` if user cancelled at the test-split warning.
 
 ## Completion status
 
-- DONE — B1 ran, attacker ran, results logged, submission checklist passed
-- DONE_WITH_CONCERNS — eval ran but submission checklist found issues (listed), or B1 exited 2 (eval pipeline pending)
-- BLOCKED — required data paths missing, B1 exited 1, or attacker exited non-zero
+- DONE — vpstack-eval ran, all requested components produced metrics, CSVs and (optional) ZIP written, experiment logged to vpbrain
+- DONE_WITH_CONCERNS — vpstack-eval ran but one or more components were skipped (DEPS_MISSING for whisper/speechmos, or no input provided)
+- BLOCKED — anonymized_path missing, every component failed, or test-split warning declined

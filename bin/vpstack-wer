@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# vpstack-wer — ASR Word-Error-Rate scoring for VP2026 utility evaluation.
+#
+# Transcribes a directory of WAV files via OpenAI Whisper, computes WER
+# against a reference manifest, and emits a JSON or human result.
+#
+# Usage:
+#   vpstack-wer --hypothesis_path /path/to/anon_audio \
+#               --reference_text /path/to/refs.tsv \
+#               [--model base.en] [--seed 42] [--output_format json]
+#
+# Reference manifest format (tab-separated, one line per file):
+#   filename<TAB>ground truth transcription
+# Filename matches the basename (without extension) of WAV files in
+# hypothesis_path. Files in hypothesis_path with no matching reference
+# are skipped (and counted as `n_unmatched` in the output).
+#
+# Models (passed to whisper):
+#   tiny.en, base.en (default), small.en, medium.en, large
+#   .en variants are English-only, smaller and faster.
+#
+# Output (JSON on stdout):
+#   {ok, method, n_files, n_unmatched, wer_overall, wer_per_file,
+#    config_hash, seed, model}
+#
+# Dependencies: pip install openai-whisper
+# WER algorithm: standard Levenshtein on word tokens, after normalize +
+# lowercase + punctuation strip. No jiwer dep.
+
+set -euo pipefail
+
+HYP_PATH=""
+REF_TEXT=""
+MODEL="base.en"
+SEED="42"
+OUTPUT_FORMAT="json"
+LANGUAGE=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --hypothesis_path) HYP_PATH="$2";   shift 2 ;;
+    --reference_text)  REF_TEXT="$2";   shift 2 ;;
+    --model)           MODEL="$2";      shift 2 ;;
+    --seed)            SEED="$2";       shift 2 ;;
+    --language)        LANGUAGE="$2";   shift 2 ;;
+    --output_format)   OUTPUT_FORMAT="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$HYP_PATH" ] && { echo "Error: --hypothesis_path required" >&2; exit 1; }
+[ -z "$REF_TEXT" ] && { echo "Error: --reference_text required" >&2; exit 1; }
+[ -d "$HYP_PATH" ] || { echo "Error: hypothesis_path does not exist: $HYP_PATH" >&2; exit 1; }
+[ -f "$REF_TEXT" ] || { echo "Error: reference_text does not exist: $REF_TEXT" >&2; exit 1; }
+
+HYP_PATH="$HYP_PATH" REF_TEXT="$REF_TEXT" MODEL="$MODEL" \
+SEED="$SEED" LANGUAGE="$LANGUAGE" OUTPUT_FORMAT="$OUTPUT_FORMAT" \
+python3 - << 'PYEOF'
+import os, sys, json, time, hashlib, re, string
+from pathlib import Path
+
+try:
+    import torch
+    import whisper
+except ImportError:
+    print(json.dumps({"ok": False, "error": {"code": "DEPS_MISSING",
+        "hint": "pip install openai-whisper torch"}}))
+    sys.exit(1)
+
+HYP_PATH = Path(os.environ["HYP_PATH"]).expanduser()
+REF_TEXT = Path(os.environ["REF_TEXT"]).expanduser()
+MODEL    = os.environ["MODEL"]
+SEED     = int(os.environ["SEED"])
+LANGUAGE = os.environ["LANGUAGE"] or None
+OUTPUT_FORMAT = os.environ["OUTPUT_FORMAT"]
+
+torch.manual_seed(SEED)
+
+# ---- Read reference manifest -------------------------------------------------
+refs = {}
+with open(REF_TEXT) as f:
+    for line in f:
+        line = line.rstrip("\n")
+        if not line or line.startswith("#"): continue
+        if "\t" in line:
+            fname, text = line.split("\t", 1)
+        else:
+            parts = line.split(maxsplit=1)
+            if len(parts) < 2: continue
+            fname, text = parts[0], parts[1]
+        # Strip extension if present, key on basename
+        key = Path(fname).stem
+        refs[key] = text
+
+if not refs:
+    print(json.dumps({"ok": False, "error": {"code": "DATA_MISSING",
+        "hint": f"reference_text {REF_TEXT} contained no lines of form 'filename<tab>text'"}}))
+    sys.exit(1)
+
+# ---- Find hypothesis WAVs ----------------------------------------------------
+wavs = sorted(HYP_PATH.rglob("*.wav"))
+if not wavs:
+    print(json.dumps({"ok": False, "error": {"code": "DATA_MISSING",
+        "hint": f"No .wav files under {HYP_PATH}"}}))
+    sys.exit(1)
+
+# ---- Load Whisper -----------------------------------------------------------
+print(f"vpstack-wer: loading whisper model={MODEL} ...", file=sys.stderr)
+try:
+    model = whisper.load_model(MODEL)
+except Exception as e:
+    print(json.dumps({"ok": False, "error": {"code": "MODEL_LOAD_FAILED",
+        "hint": f"whisper.load_model({MODEL!r}) failed: {e}"}}))
+    sys.exit(1)
+
+# ---- Text normalization for WER ----------------------------------------------
+PUNCT_RE = re.compile(r"[" + re.escape(string.punctuation) + r"]")
+def normalize(text):
+    text = text.lower()
+    text = PUNCT_RE.sub(" ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.split()
+
+def edit_distance(ref_words, hyp_words):
+    n, m = len(ref_words), len(hyp_words)
+    if n == 0: return m
+    if m == 0: return n
+    prev = list(range(m + 1))
+    for i in range(1, n + 1):
+        cur = [i] + [0] * m
+        for j in range(1, m + 1):
+            if ref_words[i-1] == hyp_words[j-1]:
+                cur[j] = prev[j-1]
+            else:
+                cur[j] = 1 + min(prev[j], cur[j-1], prev[j-1])
+        prev = cur
+    return prev[m]
+
+# ---- Transcribe + score ------------------------------------------------------
+per_file = {}
+total_errors = 0
+total_ref_words = 0
+n_unmatched = 0
+n_done = 0
+t0 = time.time()
+last_log = t0
+
+decode_opts = {"fp16": False, "temperature": 0.0}
+if LANGUAGE: decode_opts["language"] = LANGUAGE
+
+for wav in wavs:
+    key = wav.stem
+    if key not in refs:
+        n_unmatched += 1
+        continue
+    try:
+        result = model.transcribe(str(wav), **decode_opts)
+        hypothesis = result.get("text", "")
+    except Exception as e:
+        print(f"vpstack-wer: transcribe failed for {wav.name}: {e}",
+              file=sys.stderr)
+        continue
+
+    ref_words = normalize(refs[key])
+    hyp_words = normalize(hypothesis)
+    errs = edit_distance(ref_words, hyp_words)
+    n_ref = len(ref_words)
+    wer = errs / max(1, n_ref)
+    per_file[key] = {
+        "n_ref_words": n_ref,
+        "n_errors": int(errs),
+        "wer": round(wer * 100, 2),
+        "hypothesis": hypothesis.strip()[:200],
+    }
+    total_errors += errs
+    total_ref_words += n_ref
+    n_done += 1
+
+    now = time.time()
+    if now - last_log > 30 or n_done == len(wavs):
+        elapsed = now - t0
+        rate = n_done / elapsed if elapsed > 0 else 0
+        eta = (len(wavs) - n_done) / rate if rate > 0 else 0
+        print(f"vpstack-wer: {n_done}/{len(wavs)} done, ETA {eta:.0f}s",
+              file=sys.stderr, flush=True)
+        last_log = now
+
+if total_ref_words == 0:
+    print(json.dumps({"ok": False, "error": {"code": "NO_FILES_SCORED",
+        "hint": "no hypothesis WAV had a matching reference manifest entry"}}))
+    sys.exit(1)
+
+wer_overall = total_errors / total_ref_words
+
+cfg_str = f"WER:model={MODEL}:lang={LANGUAGE or 'auto'}:seed={SEED}"
+cfg_hash = hashlib.sha256(cfg_str.encode()).hexdigest()[:16]
+
+result = {
+    "ok": True,
+    "method": f"Whisper-{MODEL}",
+    "wer_overall": round(wer_overall * 100, 2),
+    "n_files": n_done,
+    "n_unmatched": n_unmatched,
+    "n_ref_words_total": total_ref_words,
+    "n_errors_total": int(total_errors),
+    "config_hash": cfg_hash,
+    "seed": SEED,
+    "model": MODEL,
+    "per_file": per_file,
+}
+
+if OUTPUT_FORMAT == "json":
+    print(json.dumps(result))
+else:
+    print(f"vpstack-wer: {n_done} files transcribed, {n_unmatched} unmatched")
+    print(f"WER overall: {result['wer_overall']:.2f}%   (lower = better)")
+    print(f"reference words: {total_ref_words} | errors: {int(total_errors)}")
+    print(f"config hash: {cfg_hash}")
+PYEOF

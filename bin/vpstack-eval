@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+# vpstack-eval — orchestrator that runs VP2026 utility + privacy + naturalness
+# scoring on an anonymized output directory and writes the official VP2026
+# submission CSV layout.
+#
+# Per Eval Plan v1 (HAL hal-05561895, Tables 8-9), the Track 1 submission tree:
+#   {output_dir}/exp/asv_anon{suffix}/eer_F-F.csv
+#   {output_dir}/exp/asv_anon{suffix}/eer_M-M.csv
+#   {output_dir}/exp/asv_anon{suffix}/eer_Mixed.csv
+#   {output_dir}/exp/asr/wer.csv
+#   {output_dir}/exp/ser/utmos.csv
+#   {output_dir}/exp/results_summary/track1/result_for_submission{suffix}.zip
+#
+# vpstack-eval calls vpstack-score (EER), vpstack-wer (WER), vpstack-utmos (PMOS),
+# parses the JSON results, and lays out the CSVs + ZIP. Each component runs only
+# if the relevant inputs are provided, so partial evals are supported.
+#
+# Usage:
+#   vpstack-eval --anonymized_path /path/to/anon \
+#                --output_dir /path/to/exp \
+#                [--enrollment_path /path/to/enroll] \
+#                [--trial_list_FF /path/to/trials_F-F.txt] \
+#                [--trial_list_MM /path/to/trials_M-M.txt] \
+#                [--trial_list_Mixed /path/to/trials_Mixed.txt] \
+#                [--reference_text /path/to/refs.tsv] \
+#                [--condition semi_informed] \
+#                [--asv_backend speechbrain] \
+#                [--whisper_model base.en] \
+#                [--system_suffix _yoursystem] \
+#                [--seed 42] [--make_zip] [--output_format json]
+#
+# At least ONE of {trial_list_*} OR --reference_text OR --skip_naturalness=false
+# must be provided — otherwise nothing to score.
+#
+# system_suffix: appears in directory and zip names (e.g. _b1mcadams).
+# Defaults to _yoursystem if not given.
+#
+# Output: human-readable summary on stdout (or JSON with --output_format json).
+# All CSVs and the optional ZIP are written under {output_dir}.
+#
+# Dependencies: pip install speechbrain torch torchaudio openai-whisper speechmos
+# (the per-component dependencies of vpstack-score / vpstack-wer / vpstack-utmos).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+ANONYMIZED=""
+OUTPUT_DIR=""
+ENROLLMENT=""
+TRIAL_FF=""
+TRIAL_MM=""
+TRIAL_MIXED=""
+REFERENCE_TEXT=""
+CONDITION="semi_informed"
+ASV_BACKEND="speechbrain"
+ASV_EXTERNAL=""
+WHISPER_MODEL="base.en"
+SYSTEM_SUFFIX="_yoursystem"
+SEED="42"
+MAKE_ZIP=0
+OUTPUT_FORMAT="human"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --anonymized_path) ANONYMIZED="$2";   shift 2 ;;
+    --output_dir)      OUTPUT_DIR="$2";   shift 2 ;;
+    --enrollment_path) ENROLLMENT="$2";   shift 2 ;;
+    --trial_list_FF|--trial_list_F-F)       TRIAL_FF="$2";    shift 2 ;;
+    --trial_list_MM|--trial_list_M-M)       TRIAL_MM="$2";    shift 2 ;;
+    --trial_list_Mixed)                     TRIAL_MIXED="$2"; shift 2 ;;
+    --reference_text)  REFERENCE_TEXT="$2"; shift 2 ;;
+    --condition)       CONDITION="$2";    shift 2 ;;
+    --asv_backend)     ASV_BACKEND="$2";  shift 2 ;;
+    --asv_external_script) ASV_EXTERNAL="$2"; shift 2 ;;
+    --whisper_model)   WHISPER_MODEL="$2"; shift 2 ;;
+    --system_suffix)   SYSTEM_SUFFIX="$2"; shift 2 ;;
+    --seed)            SEED="$2";         shift 2 ;;
+    --make_zip)        MAKE_ZIP=1;        shift 1 ;;
+    --output_format)   OUTPUT_FORMAT="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$ANONYMIZED" ] && { echo "Error: --anonymized_path required" >&2; exit 1; }
+[ -z "$OUTPUT_DIR" ] && { echo "Error: --output_dir required" >&2; exit 1; }
+[ -d "$ANONYMIZED" ] || { echo "Error: anonymized_path does not exist" >&2; exit 1; }
+
+ASV_DIR="$OUTPUT_DIR/exp/asv_anon$SYSTEM_SUFFIX"
+ASR_DIR="$OUTPUT_DIR/exp/asr"
+SER_DIR="$OUTPUT_DIR/exp/ser"
+SUMMARY_DIR="$OUTPUT_DIR/exp/results_summary/track1"
+mkdir -p "$ASV_DIR" "$ASR_DIR" "$SER_DIR" "$SUMMARY_DIR"
+
+# Track which sub-evals ran
+RAN_ASV_FF=0; RAN_ASV_MM=0; RAN_ASV_MIXED=0; RAN_WER=0; RAN_UTMOS=0
+EER_FF="-"; EER_MM="-"; EER_MIXED="-"; WER_OVERALL="-"; PMOS_MEAN="-"
+
+vpscore_args_common() {
+  local cond="$1"
+  printf -- '--condition %s --backend %s --seed %s --output_format json' \
+    "$cond" "$ASV_BACKEND" "$SEED"
+  if [ -n "$ASV_EXTERNAL" ]; then
+    printf -- ' --external_script %q' "$ASV_EXTERNAL"
+  fi
+}
+
+run_asv_for_split() {
+  local split="$1"   # F-F, M-M, or Mixed
+  local trials="$2"
+  local out_csv="$ASV_DIR/eer_${split}.csv"
+  if [ -z "$trials" ]; then return 1; fi
+  if [ ! -f "$trials" ]; then
+    echo "vpstack-eval: trial list $trials not found, skipping $split" >&2
+    return 1
+  fi
+  if [ -z "$ENROLLMENT" ]; then
+    echo "vpstack-eval: --enrollment_path required to score ASV, skipping $split" >&2
+    return 1
+  fi
+  echo "vpstack-eval: scoring ASV $split ..." >&2
+  local tmp; tmp=$(mktemp)
+  if "$SCRIPT_DIR/vpstack-score" \
+        --anonymized_path "$ANONYMIZED" \
+        --enrollment_path "$ENROLLMENT" \
+        --trial_list "$trials" \
+        $(vpscore_args_common "$CONDITION") \
+        > "$tmp"; then
+    local eer
+    eer=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('eer_overall','nan'))" "$tmp")
+    echo "split,condition,eer,n_trials,seed,config_hash" > "$out_csv"
+    local n cfg
+    n=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('n_trials','-'))" "$tmp")
+    cfg=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('method','speechbrain'))" "$tmp" | tr -d ',')
+    echo "${split},${CONDITION},${eer},${n},${SEED},${cfg}" >> "$out_csv"
+    rm -f "$tmp"
+    case "$split" in
+      F-F) EER_FF="$eer";   RAN_ASV_FF=1 ;;
+      M-M) EER_MM="$eer";   RAN_ASV_MM=1 ;;
+      Mixed) EER_MIXED="$eer"; RAN_ASV_MIXED=1 ;;
+    esac
+    return 0
+  else
+    echo "vpstack-eval: vpstack-score failed for $split (see stderr above)" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+run_wer() {
+  [ -z "$REFERENCE_TEXT" ] && return 1
+  if [ ! -f "$REFERENCE_TEXT" ]; then
+    echo "vpstack-eval: reference_text $REFERENCE_TEXT not found, skipping WER" >&2
+    return 1
+  fi
+  echo "vpstack-eval: scoring WER via Whisper-$WHISPER_MODEL ..." >&2
+  local tmp; tmp=$(mktemp)
+  if "$SCRIPT_DIR/vpstack-wer" \
+        --hypothesis_path "$ANONYMIZED" \
+        --reference_text "$REFERENCE_TEXT" \
+        --model "$WHISPER_MODEL" \
+        --seed "$SEED" \
+        --output_format json > "$tmp"; then
+    WER_OVERALL=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('wer_overall','nan'))" "$tmp")
+    local n cfg
+    n=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('n_files','-'))" "$tmp")
+    cfg=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('config_hash','-'))" "$tmp")
+    echo "metric,value,n_files,model,seed,config_hash" > "$ASR_DIR/wer.csv"
+    echo "WER,${WER_OVERALL},${n},${WHISPER_MODEL},${SEED},${cfg}" >> "$ASR_DIR/wer.csv"
+    rm -f "$tmp"
+    RAN_WER=1
+    return 0
+  else
+    echo "vpstack-eval: vpstack-wer failed (see stderr above)" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+run_utmos() {
+  echo "vpstack-eval: scoring naturalness via UTMOS22 ..." >&2
+  local tmp; tmp=$(mktemp)
+  if "$SCRIPT_DIR/vpstack-utmos" \
+        --audio_path "$ANONYMIZED" \
+        --seed "$SEED" \
+        --output_format json > "$tmp"; then
+    PMOS_MEAN=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('pmos_mean','nan'))" "$tmp")
+    local std n cfg
+    std=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('pmos_std','-'))" "$tmp")
+    n=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('n_files','-'))" "$tmp")
+    cfg=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('config_hash','-'))" "$tmp")
+    echo "metric,value,std,n_files,seed,config_hash" > "$SER_DIR/utmos.csv"
+    echo "PMOS_UTMOS22,${PMOS_MEAN},${std},${n},${SEED},${cfg}" >> "$SER_DIR/utmos.csv"
+    rm -f "$tmp"
+    RAN_UTMOS=1
+    return 0
+  else
+    echo "vpstack-eval: vpstack-utmos failed (see stderr above)" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# ---- Run components ----------------------------------------------------------
+[ -n "$TRIAL_FF" ]    && run_asv_for_split "F-F"   "$TRIAL_FF"    || true
+[ -n "$TRIAL_MM" ]    && run_asv_for_split "M-M"   "$TRIAL_MM"    || true
+[ -n "$TRIAL_MIXED" ] && run_asv_for_split "Mixed" "$TRIAL_MIXED" || true
+[ -n "$REFERENCE_TEXT" ] && run_wer || true
+run_utmos || true
+
+# ---- Submission summary CSV --------------------------------------------------
+SUMMARY_CSV="$SUMMARY_DIR/result_for_submission${SYSTEM_SUFFIX}.csv"
+{
+  echo "metric,split,value,seed,system_suffix"
+  [ "$RAN_ASV_FF" = 1 ]    && echo "EER,F-F,${EER_FF},${SEED},${SYSTEM_SUFFIX}"
+  [ "$RAN_ASV_MM" = 1 ]    && echo "EER,M-M,${EER_MM},${SEED},${SYSTEM_SUFFIX}"
+  [ "$RAN_ASV_MIXED" = 1 ] && echo "EER,Mixed,${EER_MIXED},${SEED},${SYSTEM_SUFFIX}"
+  [ "$RAN_WER" = 1 ]       && echo "WER,Overall,${WER_OVERALL},${SEED},${SYSTEM_SUFFIX}"
+  [ "$RAN_UTMOS" = 1 ]     && echo "PMOS_UTMOS22,Overall,${PMOS_MEAN},${SEED},${SYSTEM_SUFFIX}"
+} > "$SUMMARY_CSV"
+
+# ---- Optional ZIP for submission --------------------------------------------
+ZIP_PATH=""
+if [ "$MAKE_ZIP" = 1 ]; then
+  ZIP_PATH="$SUMMARY_DIR/result_for_submission${SYSTEM_SUFFIX}.zip"
+  echo "vpstack-eval: creating submission zip $ZIP_PATH ..." >&2
+  (
+    cd "$OUTPUT_DIR"
+    rm -f "$ZIP_PATH"
+    zip -qr "$ZIP_PATH" exp/asv_anon"$SYSTEM_SUFFIX" exp/asr exp/ser exp/results_summary 2>/dev/null \
+      || echo "vpstack-eval: zip command not found — install zip or skip --make_zip" >&2
+  )
+fi
+
+# ---- Output ------------------------------------------------------------------
+if [ "$OUTPUT_FORMAT" = "json" ]; then
+  python3 - << PYEOF
+import json
+result = {
+    "ok": True,
+    "system_suffix": "$SYSTEM_SUFFIX",
+    "output_dir": "$OUTPUT_DIR",
+    "components_ran": {
+        "asv_F-F":   bool(int("$RAN_ASV_FF")),
+        "asv_M-M":   bool(int("$RAN_ASV_MM")),
+        "asv_Mixed": bool(int("$RAN_ASV_MIXED")),
+        "wer":       bool(int("$RAN_WER")),
+        "utmos":     bool(int("$RAN_UTMOS")),
+    },
+    "metrics": {
+        "eer_F_F":   "$EER_FF"   if "$EER_FF"   != "-" else None,
+        "eer_M_M":   "$EER_MM"   if "$EER_MM"   != "-" else None,
+        "eer_Mixed": "$EER_MIXED" if "$EER_MIXED" != "-" else None,
+        "wer_overall": "$WER_OVERALL" if "$WER_OVERALL" != "-" else None,
+        "pmos_mean":   "$PMOS_MEAN"   if "$PMOS_MEAN"   != "-" else None,
+    },
+    "submission_summary_csv": "$SUMMARY_CSV",
+    "submission_zip": "$ZIP_PATH" or None,
+    "condition": "$CONDITION",
+    "seed": int("$SEED"),
+}
+print(json.dumps(result))
+PYEOF
+else
+  cat <<EOF
+vpstack-eval: VP2026 scorecard — system$SYSTEM_SUFFIX (condition=$CONDITION, seed=$SEED)
+
+  EER F-F:    $EER_FF$([ "$RAN_ASV_FF" = 1 ] || echo "  (skipped — no --trial_list_FF)")
+  EER M-M:    $EER_MM$([ "$RAN_ASV_MM" = 1 ] || echo "  (skipped — no --trial_list_MM)")
+  EER Mixed:  $EER_MIXED$([ "$RAN_ASV_MIXED" = 1 ] || echo "  (skipped — no --trial_list_Mixed)")
+  WER:        $WER_OVERALL$([ "$RAN_WER" = 1 ] || echo "  (skipped — no --reference_text)")
+  PMOS:       $PMOS_MEAN$([ "$RAN_UTMOS" = 1 ] || echo "  (skipped)")
+
+Direction reminders:
+  EER  ↑ = more private (50% = random-guess ceiling)
+  WER  ↓ = more useful  (0%  = perfect transcription)
+  PMOS ↑ = more natural (1=bad, 5=excellent)
+
+CSVs written:
+  $ASV_DIR/eer_*.csv
+  $ASR_DIR/wer.csv
+  $SER_DIR/utmos.csv
+  $SUMMARY_CSV
+$([ -n "$ZIP_PATH" ] && echo "
+Submission ZIP:
+  $ZIP_PATH")
+EOF
+fi

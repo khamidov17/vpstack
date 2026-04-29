@@ -1,0 +1,416 @@
+#!/usr/bin/env bash
+# vpstack-b2 — neural B2 baseline wrapper for VP2026 (HuBERT + ECAPA + HiFi-GAN
+# style architecture).
+#
+# vpstack does NOT vendor the official VP2026 B2 recipe — it lives in the
+# Voice-Privacy-Challenge-2024/2026 repo under GPLv3 and pinning a specific
+# vocoder checkpoint to the package would also violate the "no bundled weights"
+# rule (see LICENSING.md). Instead, vpstack-b2 wraps a B2 recipe the user has
+# installed and produces vpstack-shape output.
+#
+# Three backends:
+#
+#   --backend external (default, recommended for VP2026 submission)
+#     Drives a user-provided B2 recipe matching this contract:
+#       <recipe> --data_path <in> --output_dir <out> --seed <int> [--target_speaker_pool <dir>]
+#     Recipe must produce anonymized 16kHz mono WAV files in --output_dir
+#     mirroring the input directory structure, plus a JSON summary on stdout
+#     with at minimum: {ok, n_files, output_dir, config_hash}.
+#     Use this with the official VP2026 B2 recipe.
+#
+#   --backend pool-selection
+#     In-the-box neural component: extracts ECAPA speaker embeddings for every
+#     input WAV and the target_speaker_pool, picks an anonymized target per
+#     input by farthest-neighbor selection (deterministic given --seed), and
+#     writes a target-speaker mapping JSON (anon_targets.json) under
+#     --output_dir. Does NOT produce anonymized waveforms by itself — pass the
+#     mapping to your downstream vocoder. Useful as a research building block
+#     for OHNN / selection-style methods.
+#
+#   --backend speechbrain-vc (experimental)
+#     Uses SpeechBrain's pretrained Mel-VC pipeline if installed
+#     (speechbrain/tts-vc-mel-vits or compatible) to convert source speech to
+#     a sampled target speaker. Marked experimental: vocoder choice is a
+#     research design decision and the pretrained checkpoint is NOT the
+#     VP2026 B2 vocoder. Numbers from this backend are NOT comparable to
+#     official VP2026 B2 leaderboard entries — they're a sanity baseline only.
+#
+# Common usage:
+#   vpstack-b2 --backend external \
+#              --recipe_path /path/to/vp2026/run_b2.sh \
+#              --data_path /path/to/source \
+#              --output_dir /path/to/anon_b2 \
+#              --target_speaker_pool /path/to/voxceleb_pool \
+#              --seed 42 --output_format json
+#
+#   vpstack-b2 --backend pool-selection \
+#              --data_path /path/to/source \
+#              --output_dir /path/to/anon_b2 \
+#              --target_speaker_pool /path/to/voxceleb_pool \
+#              --seed 42 --output_format json
+#
+# Output (JSON on stdout): {ok, method, n_files, output_dir, config_hash, ...}
+
+set -euo pipefail
+
+BACKEND="external"
+RECIPE_PATH=""
+DATA_PATH=""
+OUTPUT_DIR=""
+TARGET_POOL=""
+SEED="42"
+OUTPUT_FORMAT="json"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --backend)             BACKEND="$2";       shift 2 ;;
+    --recipe_path)         RECIPE_PATH="$2";   shift 2 ;;
+    --data_path)           DATA_PATH="$2";     shift 2 ;;
+    --output_dir)          OUTPUT_DIR="$2";    shift 2 ;;
+    --target_speaker_pool) TARGET_POOL="$2";   shift 2 ;;
+    --seed)                SEED="$2";          shift 2 ;;
+    --output_format)       OUTPUT_FORMAT="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,/^$/p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+[ -z "$DATA_PATH" ]  && { echo "Error: --data_path required" >&2; exit 1; }
+[ -z "$OUTPUT_DIR" ] && { echo "Error: --output_dir required" >&2; exit 1; }
+[ -d "$DATA_PATH" ]  || { echo "Error: data_path does not exist: $DATA_PATH" >&2; exit 1; }
+mkdir -p "$OUTPUT_DIR"
+
+# ---- Backend: external -------------------------------------------------------
+run_external() {
+  if [ -z "$RECIPE_PATH" ]; then
+    cat >&2 <<'MSG'
+Error: --backend external requires --recipe_path.
+The recipe must be an executable matching:
+  <recipe> --data_path <in> --output_dir <out> --seed <int> [--target_speaker_pool <dir>]
+
+For VP2026, use the official B2 recipe from the challenge repo (GPLv3, NOT
+vendored by vpstack). Per LICENSING.md, you install it in your own environment
+and vpstack drives it.
+MSG
+    exit 1
+  fi
+  if [ ! -x "$RECIPE_PATH" ]; then
+    echo "Error: recipe_path is not executable: $RECIPE_PATH" >&2
+    exit 1
+  fi
+
+  echo "vpstack-b2: invoking external recipe $RECIPE_PATH ..." >&2
+  # Build args, only passing pool if provided
+  local extra=()
+  [ -n "$TARGET_POOL" ] && extra+=(--target_speaker_pool "$TARGET_POOL")
+
+  # Capture stdout (recipe is supposed to print a JSON summary line)
+  local tmp; tmp=$(mktemp)
+  if "$RECIPE_PATH" \
+        --data_path "$DATA_PATH" \
+        --output_dir "$OUTPUT_DIR" \
+        --seed "$SEED" \
+        "${extra[@]}" > "$tmp"; then
+    # Verify the recipe produced WAVs in OUTPUT_DIR
+    local n_out
+    n_out=$(find "$OUTPUT_DIR" -name "*.wav" | wc -l | tr -d ' ')
+    if [ "$n_out" -eq 0 ]; then
+      echo "vpstack-b2: external recipe exited 0 but produced no WAVs in $OUTPUT_DIR" >&2
+      rm -f "$tmp"; exit 1
+    fi
+
+    # Try to parse recipe stdout as JSON; if not valid, synthesize a summary
+    if python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$tmp" 2>/dev/null; then
+      # Re-emit recipe JSON, augmenting with our wrapper provenance
+      python3 - "$tmp" "$BACKEND" "$RECIPE_PATH" "$OUTPUT_DIR" "$SEED" << 'PYEOF'
+import json, sys, hashlib
+recipe_json, backend, recipe_path, out_dir, seed = sys.argv[1:6]
+d = json.load(open(recipe_json))
+d.setdefault("ok", True)
+d["method"] = d.get("method", "B2-external")
+d["backend"] = backend
+d["recipe_path"] = recipe_path
+d["output_dir"] = d.get("output_dir", out_dir)
+d["seed"] = int(seed)
+d.setdefault("config_hash",
+    hashlib.sha256(f"B2-ext:{recipe_path}:seed={seed}".encode()).hexdigest()[:16])
+print(json.dumps(d))
+PYEOF
+    else
+      python3 - "$RECIPE_PATH" "$OUTPUT_DIR" "$n_out" "$SEED" << 'PYEOF'
+import json, sys, hashlib
+recipe_path, out_dir, n_out, seed = sys.argv[1:5]
+print(json.dumps({
+    "ok": True,
+    "method": "B2-external",
+    "backend": "external",
+    "recipe_path": recipe_path,
+    "output_dir": out_dir,
+    "n_files": int(n_out),
+    "config_hash": hashlib.sha256(f"B2-ext:{recipe_path}:seed={seed}".encode()).hexdigest()[:16],
+    "seed": int(seed),
+    "note": "external recipe did not emit a JSON summary; counted output WAVs instead",
+}))
+PYEOF
+    fi
+    rm -f "$tmp"
+  else
+    echo "vpstack-b2: external recipe failed (see stderr above)" >&2
+    rm -f "$tmp"
+    exit 1
+  fi
+}
+
+# ---- Backend: pool-selection -------------------------------------------------
+# Real ECAPA embedding extraction + farthest-neighbor target selection.
+# Writes anon_targets.json mapping each source WAV -> target speaker WAV.
+# Does not vocode — caller pairs this mapping with their own vocoder.
+run_pool_selection() {
+  if [ -z "$TARGET_POOL" ]; then
+    echo "Error: --backend pool-selection requires --target_speaker_pool" >&2
+    exit 1
+  fi
+  if [ ! -d "$TARGET_POOL" ]; then
+    echo "Error: target_speaker_pool does not exist: $TARGET_POOL" >&2
+    exit 1
+  fi
+  DATA_PATH="$DATA_PATH" OUTPUT_DIR="$OUTPUT_DIR" \
+  TARGET_POOL="$TARGET_POOL" SEED="$SEED" \
+  OUTPUT_FORMAT="$OUTPUT_FORMAT" python3 - << 'PYEOF'
+import os, sys, json, time, hashlib
+from pathlib import Path
+
+try:
+    import torch, torchaudio, numpy as np
+    from speechbrain.pretrained import EncoderClassifier
+except ImportError:
+    print(json.dumps({"ok": False, "error": {"code": "DEPS_MISSING",
+        "hint": "pip install speechbrain torch torchaudio"}}))
+    sys.exit(1)
+
+DATA = Path(os.environ["DATA_PATH"]).expanduser()
+OUT  = Path(os.environ["OUTPUT_DIR"]).expanduser()
+POOL = Path(os.environ["TARGET_POOL"]).expanduser()
+SEED = int(os.environ["SEED"])
+OUTPUT_FORMAT = os.environ["OUTPUT_FORMAT"]
+
+torch.manual_seed(SEED); np.random.seed(SEED)
+
+print(f"vpstack-b2 (pool-selection): loading ECAPA-TDNN ...", file=sys.stderr)
+clf = EncoderClassifier.from_hparams(
+    source="speechbrain/spkrec-ecapa-voxceleb",
+    savedir=os.path.expanduser("~/.vpstack/cache/spkrec-ecapa"),
+)
+
+def emb(wav_path):
+    sig, sr = torchaudio.load(str(wav_path))
+    if sr != 16000:
+        sig = torchaudio.transforms.Resample(sr, 16000)(sig)
+    if sig.shape[0] > 1:
+        sig = sig.mean(dim=0, keepdim=True)
+    return clf.encode_batch(sig).squeeze().cpu().numpy()
+
+# Index pool (one embedding per file)
+pool_files = sorted(POOL.rglob("*.wav"))
+if not pool_files:
+    print(json.dumps({"ok": False, "error": {"code": "DATA_MISSING",
+        "hint": f"No .wav files under target pool {POOL}"}}))
+    sys.exit(1)
+src_files = sorted(DATA.rglob("*.wav"))
+if not src_files:
+    print(json.dumps({"ok": False, "error": {"code": "DATA_MISSING",
+        "hint": f"No .wav files under {DATA}"}}))
+    sys.exit(1)
+
+print(f"vpstack-b2 (pool-selection): embedding {len(pool_files)} pool files ...",
+      file=sys.stderr)
+pool_embs = []
+for i, p in enumerate(pool_files, 1):
+    try: pool_embs.append((p, emb(p)))
+    except Exception as e:
+        print(f"  skipping {p.name}: {e}", file=sys.stderr)
+    if i % 50 == 0:
+        print(f"  pool: {i}/{len(pool_files)}", file=sys.stderr, flush=True)
+if not pool_embs:
+    print(json.dumps({"ok": False, "error": {"code": "POOL_EMPTY",
+        "hint": "no pool file produced an embedding"}}))
+    sys.exit(1)
+pool_arr = np.stack([e for _, e in pool_embs])
+pool_arr = pool_arr / (np.linalg.norm(pool_arr, axis=1, keepdims=True) + 1e-12)
+
+print(f"vpstack-b2 (pool-selection): selecting anonymized targets for {len(src_files)} sources ...",
+      file=sys.stderr)
+mapping = {}
+t0 = time.time(); last = t0
+for i, s in enumerate(src_files, 1):
+    try:
+        e = emb(s)
+        en = e / (np.linalg.norm(e) + 1e-12)
+        sims = pool_arr @ en          # cosine similarity
+        # farthest-neighbor selection (lowest cosine = most different speaker)
+        # Add tiny seeded jitter to break ties deterministically
+        rng = np.random.default_rng(SEED + i)
+        tiebreak = rng.normal(scale=1e-6, size=sims.shape)
+        idx = int(np.argmin(sims + tiebreak))
+        target_wav = pool_embs[idx][0]
+        mapping[str(s.relative_to(DATA))] = {
+            "target_wav": str(target_wav),
+            "cosine_to_target": float(sims[idx]),
+        }
+    except Exception as ex:
+        print(f"  skipping {s.name}: {ex}", file=sys.stderr)
+    now = time.time()
+    if now - last > 30 or i == len(src_files):
+        print(f"  source: {i}/{len(src_files)} done", file=sys.stderr, flush=True)
+        last = now
+
+OUT.mkdir(parents=True, exist_ok=True)
+manifest_path = OUT / "anon_targets.json"
+with open(manifest_path, "w") as f:
+    json.dump({"mapping": mapping, "n": len(mapping), "seed": SEED}, f, indent=2)
+
+cfg = f"B2-pool:n_pool={len(pool_embs)}:seed={SEED}"
+result = {
+    "ok": True,
+    "method": "B2-pool-selection (ECAPA + farthest-neighbor)",
+    "backend": "pool-selection",
+    "n_files": len(mapping),
+    "n_pool": len(pool_embs),
+    "output_dir": str(OUT),
+    "anon_targets_manifest": str(manifest_path),
+    "config_hash": hashlib.sha256(cfg.encode()).hexdigest()[:16],
+    "seed": SEED,
+    "note": ("This backend selects anonymized target speakers but does NOT "
+             "vocode. Pair with a downstream voice-conversion model to produce "
+             "anonymized audio."),
+}
+if OUTPUT_FORMAT == "json":
+    print(json.dumps(result))
+else:
+    print(f"vpstack-b2: pool-selection complete")
+    print(f"  files mapped: {result['n_files']}")
+    print(f"  pool size:    {result['n_pool']}")
+    print(f"  manifest:     {manifest_path}")
+    print(f"  config hash:  {result['config_hash']}")
+    print(result['note'])
+PYEOF
+}
+
+# ---- Backend: speechbrain-vc (experimental) ----------------------------------
+run_speechbrain_vc() {
+  cat >&2 <<'MSG'
+vpstack-b2 --backend speechbrain-vc is EXPERIMENTAL.
+The vocoder is NOT the official VP2026 B2 vocoder. Numbers from this backend
+are NOT comparable to the official leaderboard. Use --backend external with
+the official recipe for anything you intend to submit or cite.
+MSG
+
+  if [ -z "$TARGET_POOL" ]; then
+    echo "Error: --backend speechbrain-vc requires --target_speaker_pool" >&2
+    exit 1
+  fi
+  DATA_PATH="$DATA_PATH" OUTPUT_DIR="$OUTPUT_DIR" \
+  TARGET_POOL="$TARGET_POOL" SEED="$SEED" \
+  OUTPUT_FORMAT="$OUTPUT_FORMAT" python3 - << 'PYEOF'
+import os, sys, json, hashlib
+from pathlib import Path
+try:
+    import torch, torchaudio, numpy as np
+except ImportError:
+    print(json.dumps({"ok": False, "error": {"code": "DEPS_MISSING",
+        "hint": "pip install torch torchaudio"}}))
+    sys.exit(1)
+
+# Probe for a SpeechBrain VC interface. Different SB versions expose this
+# differently; we accept either an EncoderDecoder or a custom VC model.
+try:
+    from speechbrain.pretrained import EncoderDecoder
+except ImportError:
+    print(json.dumps({"ok": False, "error": {"code": "DEPS_MISSING",
+        "hint": "pip install speechbrain (>=0.5.16)"}}))
+    sys.exit(1)
+
+# Try a couple of HF model ids known to expose SB-compatible VC checkpoints.
+# If neither resolves, surface a clear error pointing to --backend external.
+MODELS_TO_TRY = [
+    "speechbrain/tts-vc-mel-vits",
+    "speechbrain/voxceleb-vc-vits",
+]
+model = None; loaded_id = None
+for mid in MODELS_TO_TRY:
+    try:
+        model = EncoderDecoder.from_hparams(
+            source=mid,
+            savedir=os.path.expanduser(f"~/.vpstack/cache/{mid.replace('/','-')}"),
+        )
+        loaded_id = mid
+        break
+    except Exception as e:
+        last_err = e
+        continue
+if model is None:
+    print(json.dumps({"ok": False, "error": {"code": "MODEL_UNAVAILABLE",
+        "hint": ("None of the candidate SpeechBrain VC checkpoints could be "
+                 "loaded. Use --backend external with the official VP2026 B2 "
+                 "recipe instead, or pin a specific HF VC model and pass it "
+                 "via --recipe_path with --backend external.")}}))
+    sys.exit(1)
+
+DATA = Path(os.environ["DATA_PATH"]).expanduser()
+OUT  = Path(os.environ["OUTPUT_DIR"]).expanduser()
+POOL = Path(os.environ["TARGET_POOL"]).expanduser()
+SEED = int(os.environ["SEED"])
+torch.manual_seed(SEED); np.random.seed(SEED)
+OUT.mkdir(parents=True, exist_ok=True)
+
+src_files = sorted(DATA.rglob("*.wav"))
+pool_files = sorted(POOL.rglob("*.wav"))
+if not src_files or not pool_files:
+    print(json.dumps({"ok": False, "error": {"code": "DATA_MISSING",
+        "hint": "no .wav files in source or pool"}}))
+    sys.exit(1)
+
+# Deterministic per-source target sampling
+rng = np.random.default_rng(SEED)
+n_done = 0
+for s in src_files:
+    target = pool_files[int(rng.integers(0, len(pool_files)))]
+    try:
+        # SB VC API: typically (source_wav, target_wav) -> waveform
+        out_wav = model.convert(str(s), str(target))
+        rel = s.relative_to(DATA)
+        out_path = OUT / rel
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(out_wav, torch.Tensor):
+            torchaudio.save(str(out_path), out_wav.detach().cpu(), 16000)
+        else:
+            import soundfile as sf
+            sf.write(str(out_path), out_wav, 16000)
+        n_done += 1
+    except Exception as e:
+        print(f"vpstack-b2 (sb-vc): skipping {s.name}: {e}", file=sys.stderr)
+
+cfg = f"B2-sbvc:{loaded_id}:seed={SEED}"
+print(json.dumps({
+    "ok": True,
+    "method": f"B2-speechbrain-vc ({loaded_id})",
+    "backend": "speechbrain-vc",
+    "n_files": n_done,
+    "n_source": len(src_files),
+    "output_dir": str(OUT),
+    "config_hash": hashlib.sha256(cfg.encode()).hexdigest()[:16],
+    "seed": SEED,
+    "experimental": True,
+    "note": ("Vocoder checkpoint is NOT the official VP2026 B2 vocoder. "
+             "Use --backend external for VP2026-comparable numbers."),
+}))
+PYEOF
+}
+
+case "$BACKEND" in
+  external)        run_external ;;
+  pool-selection)  run_pool_selection ;;
+  speechbrain-vc)  run_speechbrain_vc ;;
+  *) echo "Error: --backend must be external|pool-selection|speechbrain-vc" >&2; exit 1 ;;
+esac

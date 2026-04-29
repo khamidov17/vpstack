@@ -4,6 +4,17 @@ All notable changes to vpstack are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added (full eval pipeline + B2 wrapper, 2026-04-29)
+- **`vpstack-wer`** — ASR Word-Error-Rate scoring via OpenAI Whisper. Configurable model (`tiny.en` / `base.en` / `small.en` / `medium.en` / `large`), TSV reference manifest, edit-distance WER (own implementation, no `jiwer` dep), per-file + overall, JSON or human output. ~150 lines bash + python.
+- **`vpstack-utmos`** — Naturalness PMOS scoring via UTMOS22 (Saeki et al. Interspeech 2022, arXiv:2204.02152) using the `speechmos` package. Per-file + mean/std/min/max, JSON or human. Direction reminder built in (higher = more natural).
+- **`vpstack-eval`** — full VP2026 scorecard orchestrator. Drives `vpstack-score` (EER per F-F / M-M / Mixed split), `vpstack-wer` (utility), `vpstack-utmos` (naturalness), then writes the official submission CSV layout per Eval Plan v1 (HAL hal-05561895, Tables 8-9): `exp/asv_anon{suffix}/eer_*.csv`, `exp/asr/wer.csv`, `exp/ser/utmos.csv`, `exp/results_summary/track1/result_for_submission{suffix}.csv`. Optional `--make_zip` for the bundled submission archive. Partial evals supported — components without inputs are reported as skipped, the rest continue.
+- **`vpstack-b2`** — neural B2 baseline wrapper, three backends:
+  - `external` (default, recommended for VP2026 submission) — drives a user-installed B2 recipe matching the contract `<recipe> --data_path --output_dir --seed [--target_speaker_pool]`. Per LICENSING.md the official VP2026 B2 recipe is GPLv3 and stays out-of-tree; vpstack just drives it.
+  - `pool-selection` — ECAPA-TDNN embeddings on source + target pool, farthest-neighbor selection per file (deterministic given `--seed`), writes `anon_targets.json` mapping. A research building block for OHNN / selection-style methods. Does not vocode by itself.
+  - `speechbrain-vc` (experimental) — falls back to a pretrained SpeechBrain VC checkpoint if available. Clearly labelled as NOT VP2026-comparable; emits an upfront warning.
+- **`/vp-eval` skill rewritten** — was advertising "WER and linkability scoring not yet implemented in vpstack." Now drives `vpstack-eval` directly, parses the JSON, presents the VP2026 scorecard, logs the run to vpbrain (`metrics.eer`/`wer`/`pmos`), and offers the submission ZIP. Also fixed: dead reference to `/tmp/vp_b1_run.py` (replaced by `vpstack-b1` since v0.2), invented `eer.json` schema (real VP2026 layout is CSVs per Eval Plan), and stale `vp_check_submission` MCP-tool reference (gone since v0.2 zero-code refactor).
+- **`/vp-baseline-compare` Step 4.5: optional B2 column** — was hard-coded to skip B2 with a "not yet part of vpstack" note. Now offers `vpstack-b2 --backend external` (drive your installed VP2026 B2 recipe) or `--backend pool-selection` (target-speaker manifest only).
+
 ### Added (vpbrain end-to-end wiring, 2026-04-29)
 - **`/vp-brain` skill** — slash command finally matches what the README has been advertising. Thin wrapper over `vpstack-brain`: lists, ranks, queries, diffs, surfaces learnings + timeline. Works on Claude Code / Codex / Cursor. Skill count: 17 → **18**.
 - **`vpstack-brain --slug <name>` cross-project flag** — query any project's experiments without `cd`-ing into the repo. Reads as `vpstack-brain --slug other-project list`.
