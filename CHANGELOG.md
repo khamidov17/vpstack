@@ -4,6 +4,21 @@ All notable changes to vpstack are documented here. Format follows [Keep a Chang
 
 ## [Unreleased]
 
+### Added (vpbrain end-to-end wiring, 2026-04-29)
+- **`/vp-brain` skill** — slash command finally matches what the README has been advertising. Thin wrapper over `vpstack-brain`: lists, ranks, queries, diffs, surfaces learnings + timeline. Works on Claude Code / Codex / Cursor. Skill count: 17 → **18**.
+- **`vpstack-brain --slug <name>` cross-project flag** — query any project's experiments without `cd`-ing into the repo. Reads as `vpstack-brain --slug other-project list`.
+- **`vpstack-brain projects`** — new subcommand, lists every known project under `~/.vpstack/projects/` with experiment + learning counts and marks the active one.
+- **Timeline now scoped to active slug** — `vpstack-brain timeline` filters to the current project (or `--slug` override) instead of dumping global activity.
+- **`/vp-baseline-compare` checks vpbrain for duplicates** — Step 1.5 queries prior `B1-McAdams` runs before re-running B1; offers to reuse if a recent run exists. B1 is deterministic for a fixed alpha/seed/data, so this saves the user a 5-min round-trip.
+- **`/vp-writeup` reads from vpbrain instead of a fictional MCP tool** — Step 1 now lists experiments via `vpstack-brain list`, resolves user picks against `~/.vpstack/projects/$SLUG/experiments/`, and pulls learnings via `vpstack-brain learnings`. The old `vp_search_experiments` reference (dead since v0.2 MCP rip-out) is gone.
+
+### Fixed (vpbrain bugs, 2026-04-29)
+- **`vpstack-brain stats` printed `Project: ?`** — `cmd_stats` referenced `os.environ.get('SLUG','?')` but `SLUG` was never exported. Fixed by exporting once at the top of the script.
+- **`vpstack-brain learnings` ignored `--slug` override** — used to shell out to `vpstack-learnings-search` which derives slug from cwd. Inlined the read so the override propagates.
+- **`vpstack-skill-init` learnings markers swallowed by `eval`** — skills consume the preamble via `eval "$(vpstack-skill-init …)"`, so any non-key=value line on stdout becomes a "command not found" error. The `RECENT_LEARNINGS_START` / `[key] insight` / `RECENT_LEARNINGS_END` lines now go to stderr, matching their display-only intent and making the cross-session learnings feature actually visible.
+
+## [Unreleased — pre-2026-04-29]
+
 ### Added (full domain command set, 2026-04-28)
 - **`/vp-talk`** — voice-anonymization research-direction office hours. 8 forcing questions covering open question, threat model, contribution claim, baseline selection, eval scope, failure modes, scope discipline, and (clinical-only) HIPAA-grade threat surface. Writes locked research-plan docs to `~/.vpstack/projects/{slug}/research-plans/`. Includes domain knowledge for OHNN (Orthogonal Householder Neural Network, Miao et al. 2023, arXiv:2305.18823) and three architectural families (classical / selection / transformation).
 - **`/vp-plan-design-review`** — review recipe / attacker / eval architecture BEFORE coding. Validates recipe interface contract, attacker condition coverage, the 5 reproducibility checks, eval-set safety (no test-split leakage), and license posture. Distinct from gstack's visual-UI design review.

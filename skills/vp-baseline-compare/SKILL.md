@@ -129,7 +129,29 @@ When voice anonymization work is requested, use these vpstack skills:
 
 ```bash
 EXP_ID="baseline-compare-$(date +%Y%m%dT%H%M%S)"
+VPBRAIN=~/.claude/skills/vpstack/bin/vpstack-brain
+[ -x "$VPBRAIN" ] || VPBRAIN=.claude/skills/vpstack/bin/vpstack-brain
 ```
+
+### Step 1.5: Check vpbrain for prior runs
+
+Before spending time re-running B1, ask vpbrain whether this project has already produced canonical baseline numbers recently:
+
+```bash
+$VPBRAIN query "B1-McAdams" 2>/dev/null | head -20 || true
+$VPBRAIN top --metric eer --limit 3 2>/dev/null || true
+```
+
+If a recent (≤7 days old) `B1-McAdams` run already exists with the same data path, say so and ask via AskUserQuestion:
+
+> **Found a prior B1 run on this data ({prior_exp_id}, {date}, EER={eer}).**
+>
+> A) Skip re-running B1, reuse the prior numbers in the comparison
+> B) Re-run B1 anyway (something material changed)
+>
+> Recommendation: A, because B1 is deterministic for a fixed alpha/seed/data — re-running gives you the same numbers. Pick B only if alpha changed, audio changed, or you suspect drift.
+
+If A: load `~/.vpstack/projects/$SLUG/experiments/$PRIOR_EXP_ID/summary.json` and skip to Step 5 (comparison table).
 
 ### Step 2: Locate the user's system
 

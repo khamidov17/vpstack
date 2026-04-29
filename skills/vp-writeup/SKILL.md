@@ -35,6 +35,12 @@ esac
 if [ -n "$UPGRADE_AVAILABLE" ]; then
   echo "vpstack upgrade available: $UPGRADE_AVAILABLE  (run: vpstack-upgrade)"
 fi
+
+SLUG=$(~/.claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || .claude/skills/vpstack/bin/vpstack-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+TEL_START=$(date +%s)
+VPBRAIN=~/.claude/skills/vpstack/bin/vpstack-brain
+[ -x "$VPBRAIN" ] || VPBRAIN=.claude/skills/vpstack/bin/vpstack-brain
+EXP_ROOT="$HOME/.vpstack/projects/$SLUG/experiments"
 ```
 
 ## First-run gate
@@ -45,15 +51,50 @@ If `ACTIVATION` is `DETECTED_FIRST_RUN`, ask once via AskUserQuestion (Yes / No 
 
 ### Step 1: Locate experiments to summarize
 
-> "Which experiments to include in the report?"
+First, surface what's available so the user picks against real data, not guesses:
+
+```bash
+$VPBRAIN list
+echo
+$VPBRAIN stats
+```
+
+Then ask via AskUserQuestion:
+
+> **Which experiments to include in the report?**
+>
 > A) Most recent N (ask for N)
 > B) All experiments in this project
 > C) By experiment IDs (paste comma-separated)
-> D) Filter by spike or hypothesis (load all spikes referencing a hypothesis)
+> D) Filter by hypothesis or method substring (uses `vpstack-brain query`)
+>
+> Recommendation: A with N=5, because reports stay readable and reviewers can ask for older data on demand.
 
-Call `vp_search_experiments` to find matching experiments based on the user's choice.
+Resolve to a concrete list of EXP_IDs:
+
+- A → `ls "$EXP_ROOT" | sort -r | head -N`
+- B → `ls "$EXP_ROOT"`
+- C → user-provided list, validate each `[ -f "$EXP_ROOT/$EXP_ID/summary.json" ]`
+- D → `$VPBRAIN query "$TEXT"` and parse the EXP_IDs out of the output
+
+If `$EXP_ROOT` does not exist or is empty: stop with "No experiments logged yet for project $SLUG. Run /vp-spike, /vp-baseline-compare, /vp-attack, /vp-implement, or /vp-eval first — they write the summaries this report reads."
 
 ### Step 2: Generate report (deterministic; no LLM prose)
+
+For each EXP_ID, read its `summary.json` directly (this is the same file vpstack-brain reads):
+
+```bash
+for ID in $EXP_IDS; do
+  cat "$EXP_ROOT/$ID/summary.json"
+done
+```
+
+Also pull project-level context for the report header:
+
+```bash
+$VPBRAIN stats          # total experiments, best EER, trend
+$VPBRAIN learnings --limit 5   # confirmed findings to attach as Notes
+```
 
 The report is **mostly mechanical concatenation** from logged data — not LLM generation. The structure:
 

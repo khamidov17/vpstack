@@ -105,14 +105,18 @@ LEARNINGS_COUNT=0
 [ -f "$LEARNINGS_FILE" ] && LEARNINGS_COUNT=$(wc -l < "$LEARNINGS_FILE" | tr -d ' ')
 echo "LEARNINGS_COUNT=$LEARNINGS_COUNT"
 if [ "$LEARNINGS_COUNT" -gt 0 ]; then
-  # Surface the 3 most recent learnings for skill context
-  echo "RECENT_LEARNINGS_START"
+  # Surface the 3 most recent learnings for skill context. Emit to stderr because
+  # skills consume this whole stream via `eval "$(...)"` — only key=value pairs are
+  # safe on stdout. Display markers + free-text content go to stderr so the user
+  # (and the skill author reading the preamble output) sees them, but eval doesn't
+  # try to execute "[b1-test] alpha 0.8 leaks..." as a command.
+  >&2 echo "RECENT_LEARNINGS_START"
   tail -3 "$LEARNINGS_FILE" 2>/dev/null | while IFS= read -r line; do
     KEY=$(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('key',''))" 2>/dev/null || echo "")
     INSIGHT=$(echo "$line" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('insight','')[:80])" 2>/dev/null || echo "")
-    [ -n "$KEY" ] && echo "  [$KEY] $INSIGHT"
+    [ -n "$KEY" ] && >&2 echo "  [$KEY] $INSIGHT"
   done
-  echo "RECENT_LEARNINGS_END"
+  >&2 echo "RECENT_LEARNINGS_END"
 fi
 
 # 6. Skill routing — offer to inject routing table into user project CLAUDE.md (once per project)

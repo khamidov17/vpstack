@@ -175,6 +175,7 @@ This gives the agent the VP2026 domain facts upfront — metric directions, base
 | `/vp-autoplan` | Chains all skills end-to-end |
 | `/vp-context-save` | Save session state — active hypothesis, last experiment, next step |
 | `/vp-context-restore` | Resume from saved state — 2-sentence briefing, pick up where you left off |
+| `/vp-brain` | Browse experiment store: `list`, `top`, `stats`, `query`, `diff`, `learnings`, `timeline`, `projects` |
 
 ---
 
@@ -187,7 +188,7 @@ The skills call these directly. You can also use them standalone:
 | `vpstack-b1` | McAdams B1 anonymization on any WAV directory. CPU only, ~5min for dev set |
 | `vpstack-score` | ASV attacker — wraps SpeechBrain ECAPA or your own external attacker |
 | `vpstack-lock` | Generate/verify `checkpoints.lock` for hash-pinned reproducibility |
-| `vpstack-brain` | Experiment store CLI: `list`, `top`, `show`, `diff`, `query`, `stats`, `learnings`, `timeline` |
+| `vpstack-brain` | Experiment store CLI: `list`, `top`, `show`, `diff`, `query`, `stats`, `learnings`, `timeline`, `projects`. `--slug <name>` for cross-project queries |
 | `vpstack-slug` | Project slug (basename + USER-scoped hash) — matches storage paths |
 | `vpstack-skill-init` | Skill preamble logic — activation gate, learnings load, routing injection |
 | `vpstack-detect` | Detects voice-anonymization projects |

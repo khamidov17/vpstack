@@ -14,13 +14,33 @@
 #   vpstack-brain stats                           # summary: count, best EER, EER trend
 #   vpstack-brain learnings [--query TEXT]        # show research learnings
 #   vpstack-brain timeline [--last 10]            # recent skill activity
+#   vpstack-brain projects                        # list all known project slugs
+#
+# Cross-project queries:
+#   vpstack-brain --slug <project-slug> list      # query a different project without cd
+#   vpstack-brain --project <slug> top --metric eer
 #
 # vpstack-brain reads JSONL files directly. No database. Same data the skills write.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SLUG=$("${SCRIPT_DIR}/vpstack-slug" 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+
+# Parse leading --slug / --project flag (must come before the subcommand)
+SLUG_OVERRIDE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --slug|--project) SLUG_OVERRIDE="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+if [ -n "$SLUG_OVERRIDE" ]; then
+  SLUG="$SLUG_OVERRIDE"
+else
+  SLUG=$("${SCRIPT_DIR}/vpstack-slug" 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+fi
+export SLUG
 PROJECT_DIR="$HOME/.vpstack/projects/$SLUG"
 EXP_DIR="$PROJECT_DIR/experiments"
 LEARNINGS="$PROJECT_DIR/learnings.jsonl"
@@ -244,22 +264,60 @@ PYEOF
 }
 
 # ----- learnings -----
+# Read the per-project learnings.jsonl directly so --slug override propagates.
 cmd_learnings() {
-  local query=""
+  local query="" limit=10
   while [ $# -gt 0 ]; do
     case "$1" in
       --query) query="$2"; shift 2 ;;
+      --limit) limit="$2"; shift 2 ;;
       *) shift ;;
     esac
   done
-  if [ -n "$query" ]; then
-    "${SCRIPT_DIR}/vpstack-learnings-search" --query "$query"
-  else
-    "${SCRIPT_DIR}/vpstack-learnings-search"
+  if [ ! -f "$LEARNINGS" ]; then
+    echo "No learnings yet for project $SLUG"
+    echo "Use vpstack-learnings-log to record research insights."
+    return
   fi
+  LEARNINGS="$LEARNINGS" QUERY="$query" LIMIT="$limit" python3 - << 'PYEOF'
+import os, json, sys
+entries = []
+with open(os.environ["LEARNINGS"]) as f:
+    for line in f:
+        line = line.strip()
+        if not line: continue
+        try: entries.append(json.loads(line))
+        except json.JSONDecodeError: continue
+entries.reverse()  # newest first
+
+q = os.environ["QUERY"].lower()
+if q:
+    entries = [e for e in entries
+               if q in e.get("key","").lower()
+               or q in e.get("insight","").lower()
+               or q in " ".join(e.get("tags", [])).lower()]
+entries = entries[:int(os.environ["LIMIT"])]
+
+if not entries:
+    print("No learnings match your query.")
+    sys.exit(0)
+
+print(f"Research learnings ({len(entries)} found):")
+print()
+for e in entries:
+    conf = e.get("confidence", "?")
+    src  = e.get("source", "manual")
+    ts   = e.get("ts", "")[:10]
+    key  = e.get("key", "")
+    insight = e.get("insight", "")
+    print(f"[{key}] (confidence: {conf}, source: {src}, {ts})")
+    print(f"  {insight}")
+    print()
+PYEOF
 }
 
 # ----- timeline -----
+# Filter to the active slug so timeline matches every other subcommand's scope.
 cmd_timeline() {
   local last=10
   while [ $# -gt 0 ]; do
@@ -272,18 +330,66 @@ cmd_timeline() {
     echo "No timeline data yet. Skill runs are logged to $TIMELINE."
     return
   fi
-  echo "Last $last skill runs:"
-  tail -"$last" "$TIMELINE" | python3 -c "
-import sys, json
-for line in sys.stdin:
-    try: d = json.loads(line)
-    except: continue
-    skill = d.get('skill', '?')
-    event = d.get('event', '?')
-    ts = d.get('ts', '')[:19].replace('T', ' ')
-    branch = d.get('branch', '')
-    print(f'  {ts}  {skill:<25} {event:<10} {branch}')
-"
+  TIMELINE="$TIMELINE" SLUG="$SLUG" LAST="$last" python3 - << 'PYEOF'
+import os, json
+slug = os.environ["SLUG"]
+last = int(os.environ["LAST"])
+matched = []
+with open(os.environ["TIMELINE"]) as f:
+    for line in f:
+        try: d = json.loads(line)
+        except json.JSONDecodeError: continue
+        if d.get("slug") and d["slug"] != slug: continue
+        matched.append(d)
+matched = matched[-last:]
+if not matched:
+    print(f"No skill runs logged for project {slug} yet.")
+else:
+    print(f"Last {len(matched)} skill runs for {slug}:")
+    for d in matched:
+        skill = d.get("skill", "?")
+        event = d.get("event", "?")
+        ts = d.get("ts", "")[:19].replace("T", " ")
+        branch = d.get("branch", "")
+        print(f"  {ts}  {skill:<25} {event:<10} {branch}")
+PYEOF
+}
+
+# ----- projects -----
+# List every known project slug under ~/.vpstack/projects/, with experiment counts.
+cmd_projects() {
+  local root="$HOME/.vpstack/projects"
+  if [ ! -d "$root" ]; then
+    echo "No projects yet. Run a vpstack skill in a voice-anonymization repo to bootstrap."
+    return
+  fi
+  ROOT="$root" CURRENT="$SLUG" python3 - << 'PYEOF'
+import os
+from pathlib import Path
+root = Path(os.environ["ROOT"])
+current = os.environ["CURRENT"]
+rows = []
+for p in sorted(root.iterdir()):
+    if not p.is_dir(): continue
+    exp_count = 0
+    exp_dir = p / "experiments"
+    if exp_dir.exists():
+        exp_count = sum(1 for d in exp_dir.iterdir() if d.is_dir() and (d / "summary.json").exists())
+    learn_count = 0
+    learn_file = p / "learnings.jsonl"
+    if learn_file.exists():
+        with open(learn_file) as f:
+            learn_count = sum(1 for line in f if line.strip())
+    rows.append((p.name, exp_count, learn_count))
+if not rows:
+    print("No projects yet.")
+else:
+    print(f"{'PROJECT':<48} {'EXPS':>6} {'LEARN':>6}")
+    print("-" * 64)
+    for name, e, l in rows:
+        marker = " ←" if name == current else ""
+        print(f"{name[:48]:<48} {e:>6} {l:>6}{marker}")
+PYEOF
 }
 
 # ----- dispatch -----
@@ -299,6 +405,7 @@ case "$SUBCMD" in
   stats)      cmd_stats "$@" ;;
   learnings)  cmd_learnings "$@" ;;
   timeline)   cmd_timeline "$@" ;;
+  projects)   cmd_projects "$@" ;;
   -h|--help|help) cmd_help ;;
   *) echo "Unknown subcommand: $SUBCMD. Run 'vpstack-brain help'." >&2; exit 1 ;;
 esac
