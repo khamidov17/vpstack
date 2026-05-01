@@ -24,14 +24,13 @@ cat ~/.vpstack/projects/$SLUG/domain_config.yaml
 
 ## Running B1 McAdams baseline
 
-The B1 script lives in skills/vp-baseline-compare/SKILL.md Step 4 as an inline template.
-Extract it, write to /tmp/vp_b1_run.py, then:
+Run via `vpstack-b1` binary:
 
 ```bash
 # ⚠ If audio is not 16kHz, resample first:
 # sox input.wav -r 16000 output.wav
 
-python3 /tmp/vp_b1_run.py --data_path /path/to/audio --seed 42
+vpstack-b1 --data_path /path/to/audio --seed 42
 # pip install soundfile scipy numpy  (if needed)
 ```
 
@@ -50,10 +49,10 @@ Get slug: run `~/.claude/skills/vpstack/bin/vpstack-slug` in terminal.
 
 ## What's implemented vs pending
 
-- B1 McAdams anonymization: WORKING (see Step 4 in vp-baseline-compare/SKILL.md)
+- B1 McAdams anonymization: WORKING (`vpstack-b1`)
 - B2 neural pipeline: PENDING v0.3
-- ASV attacker: requires official VP2026 challenge attacker script (not bundled)
-- Full EER/WER eval: PENDING v0.3
+- ASV attacker: WORKING (`vpstack-score`)
+- Full EER/WER eval: WORKING (`vpstack-eval`)
 
 ## Component quick reference
 

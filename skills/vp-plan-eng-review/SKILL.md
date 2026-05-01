@@ -144,7 +144,7 @@ For every FAIL or UNCERTAIN, follow the gstack AskUserQuestion format: re-ground
 **What it checks:** New MCP tools return `ok()` / `err(code, ...)` from `errors.py`. Every error code is in `ERROR_CODES`. No raw exceptions escape. CLAUDE.md rule #5.
 
 **How to verify:**
-- For new files in `mcp-server/vpstack_mcp/tools/`, confirm `from vpstack_mcp.errors import ToolResult, ok, err` and that the top-level handler is wrapped in `try / except`.
+- For new files in `bin/`, confirm they follow the bash binary contract (help, absolute paths for sub-calls).
 - Grep for `raise ` inside tool handlers — any uncaught raise is a violation.
 - For each `err("FOO", ...)`, check `FOO ∈ ERROR_CODES`.
 
@@ -161,7 +161,7 @@ For every FAIL or UNCERTAIN, follow the gstack AskUserQuestion format: re-ground
 
 **What it checks:** Any new code writing to `~/.vpstack/projects/{slug}/` uses write-tmp → fsync → rename → fsync-parent. CLAUDE.md rule #7. CG7.
 
-**How to verify:** Grep new writers for `os.fsync`, `os.replace`. Compare against `_atomic_write_json` in `mcp-server/vpstack_mcp/tools/log_experiment.py`. Reject naive `json.dump(data, open(path, "w"))`.
+**How to verify:** Grep new writers for `os.fsync`, `os.replace`. Compare against `py_set` in `bin/vpstack-config`. Reject naive `json.dump(data, open(path, "w"))`.
 
 ### Gate 9: 5 reproducibility checks [P0 — research-correctness]
 

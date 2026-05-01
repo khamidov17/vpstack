@@ -10,14 +10,14 @@ This test plan is the QA contract for v0.1. Every item must be passing before re
 ## CRITICAL CI Gates (block release if any fail)
 
 ### CG1 — B1 baseline reproducibility
-- **What:** `speechbrain_voice_anon/recipes/VP2026/baseline_B1/` produces EER within ±0.5% of published number on dev set.
-- **Where:** `tests/recipes/test_baseline_B1.py`
+- **What:** `bin/vpstack-b1` produces EER within ±0.5% of published number on dev set.
+- **Where:** `tests/test_binaries.py`
 - **Why:** Wrong baseline = wrong citations = community trust gone. The number is the product.
 - **How:** Pin random seed, run baseline on dev fixture, assert `abs(eer - PUBLISHED_B1_EER) < 0.005`.
-- **Frequency:** Every PR. GPU runner required.
+- **Frequency:** Every PR.
 
 ### CG2 — B2 baseline reproducibility
-- Same as CG1 but for B2. `tests/recipes/test_baseline_B2.py`.
+- Same as CG1 but for B2. `tests/test_binaries.py`.
 
 ### CG3 — Telemetry sanitization (off mode)
 - **What:** When `telemetry=off`, `vpstack-telemetry-log` makes ZERO network calls.
@@ -58,7 +58,7 @@ vpstack has no web pages. Surfaces under test:
 - **CLI entrypoints:** `npx vpstack`, `npx vpstack init`, `npx vpstack upgrade`, `vpstack-config`, `vpstack-detect`
 - **MCP tools (7):** see DESIGN.md MCP Server Tool Signatures table
 - **Slash commands (6):** `/vp-hypothesis`, `/vp-spike`, `/vp-baseline-compare`, `/vp-eval`, `/vp-repro-check`, `/vp-writeup`
-- **Recipe entrypoints:** `python -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.train`, same for B2
+- **Recipe entrypoints:** `bin/vpstack-b1`, `bin/vpstack-b2`
 - **Telemetry endpoint:** `POST https://telemetry.vpstack.dev/v1/event`
 
 ---

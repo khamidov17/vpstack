@@ -28,11 +28,10 @@ copy `docs/domain.md` and `docs/claude-md-template.md` into that project for con
 - B1 (McAdams): signal-processing, CPU, fast. Weak anonymization. The floor to beat.
 - B2 (HuBERT + ECAPA-TDNN + HiFi-GAN): neural, GPU. Strong. The real target. NOT yet implemented in vpstack.
 
-**B1 McAdams script:** The skill `vp-baseline-compare` contains a self-contained Python
-script that Claude writes to `/tmp/vp_b1_run.py`. You can extract and run it directly:
+**B1 McAdams:** Run via `vpstack-b1` binary:
 ```bash
-# Extract and run B1 on your data
-python3 /tmp/vp_b1_run.py --data_path /path/to/your/audio --seed 42
+# Run B1 on your data
+vpstack-b1 --data_path /path/to/your/audio --seed 42
 # Requires: pip install soundfile scipy numpy
 ```
 
@@ -93,9 +92,8 @@ Follow `skills/vp-hypothesis/SKILL.md`. Writes to:
 ### Step 2: Run B1 anonymization (baseline anchor)
 
 ```bash
-# The McAdams B1 script — extract from skills/vp-baseline-compare/SKILL.md Step 4
-# Write it to /tmp/vp_b1_run.py then:
-python3 /tmp/vp_b1_run.py --data_path /path/to/data --seed 42
+# Run B1 binary
+vpstack-b1 --data_path /path/to/data --seed 42
 # Requires: pip install soundfile scipy numpy
 # ⚠ If your audio is not 16kHz: sox input.wav -r 16000 output.wav
 ```

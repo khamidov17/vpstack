@@ -65,7 +65,7 @@ git diff "$BASE"...HEAD --name-only | head -20
 
 Categorize:
 - **Recipe changed** (under `your project code in `) → must run repro-check + baseline compare before ship
-- **MCP tool changed** (under `mcp-server/`) → must run pytest -m "not gpu"
+- **Binary changed** (under `bin/`) → must run pytest -v tests/
 - **Skill changed** (under `skills/`) → must validate SKILL.md frontmatter
 - **bin/ changed** → must `bash -n` syntax-check
 - **Test changed only** → run those tests
@@ -148,7 +148,7 @@ Ask via AskUserQuestion:
 > C) Major (0.1.0-dev → 1.0.0-dev) — breaking API change
 > D) No bump — just commit and push at current version
 
-If user picks A/B/C: update `VERSION`, `package.json::version`, `mcp-server/pyproject.toml::version`, `your project code in pyproject.toml::version` together (the CI workflow `package-lint` enforces they match).
+If user picks A/B/C: update `VERSION`, `package.json::version` together (the CI workflow `package-lint` enforces they match).
 
 ### Step 8: CHANGELOG entry
 

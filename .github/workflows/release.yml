@@ -1,11 +1,9 @@
 name: Release
 
 # Tag-driven atomic release: bumping VERSION and pushing a v*.*.* tag
-# publishes all three packages in lockstep.
+# publishes the npm package.
 #
 # Required secrets:
-#   PYPI_TOKEN_MCP        — PyPI API token scoped to vpstack-mcp
-#   PYPI_TOKEN_RECIPE     — PyPI API token scoped to speechbrain-voice-anon
 #   NPM_TOKEN             — npm automation token for vpstack package
 #
 # Tag format: v0.1.0, v0.1.1, v0.2.0-rc1, etc.
@@ -37,39 +35,8 @@ jobs:
       - name: Verify all package versions match
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
-          MCP_VERSION=$(grep -m1 'version = ' mcp-server/pyproject.toml | cut -d'"' -f2)
-          RECIPE_VERSION=$(grep -m1 'version = ' speechbrain_voice_anon/pyproject.toml | cut -d'"' -f2)
           NPM_VERSION=$(node -p "require('./package.json').version")
-          [ "$VERSION" = "$MCP_VERSION" ] && [ "$VERSION" = "$RECIPE_VERSION" ] && [ "$VERSION" = "$NPM_VERSION" ] \
-            || (echo "FAIL: versions out of sync. Bump all four together."; exit 1)
-
-  publish-mcp:
-    needs: verify-versions-match
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - run: pip install build twine
-      - run: cd mcp-server && python -m build
-      - run: twine upload mcp-server/dist/*
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN_MCP }}
-
-  publish-recipe:
-    needs: verify-versions-match
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - run: pip install build twine
-      - run: cd speechbrain_voice_anon && python -m build
-      - run: twine upload speechbrain_voice_anon/dist/*
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN_RECIPE }}
+          [ "$VERSION" = "$NPM_VERSION" ] || (echo "FAIL: versions out of sync. Bump both together."; exit 1)
 
   publish-npm:
     needs: verify-versions-match
@@ -85,7 +52,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   github-release:
-    needs: [publish-mcp, publish-recipe, publish-npm]
+    needs: [publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -98,9 +65,7 @@ jobs:
           body: |
             vpstack ${{ github.ref_name }}
 
-            Three packages published atomically:
+            Package published:
             - npm: `vpstack@${{ github.ref_name }}`
-            - PyPI: `vpstack-mcp==${{ github.ref_name }}`
-            - PyPI: `speechbrain-voice-anon==${{ github.ref_name }}`
 
             See [CHANGELOG.md](CHANGELOG.md) for details.
