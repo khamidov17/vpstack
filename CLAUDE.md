@@ -97,7 +97,7 @@ pytest tests/activation tests/telemetry  # quick subset (~10s)
 
 ### Update a release version
 
-Bump `VERSION` AND `package.json::version` AND `mcp-server/pyproject.toml::version` AND `speechbrain_voice_anon/pyproject.toml::version` together. The CI workflow (`.github/workflows/ci.yml::package-lint`) verifies they all match.
+Bump `VERSION` AND `package.json::version` together. The CI workflow (`.github/workflows/ci.yml::package-lint`) verifies they all match.
 
 ---
 

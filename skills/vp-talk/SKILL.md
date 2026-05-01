@@ -361,7 +361,7 @@ pip install speechbrain
 ```
 
 **If SCALE is Large or Real-time:**
-> Large: B1 is embarrassingly parallel — `parallel python3 /tmp/vp_b1_run.py ::: dir1 dir2 ...`
+> Large: B1 is embarrassingly parallel — `parallel vpstack-b1 --data_path ::: dir1 dir2 ...`
 > Real-time: B1 is fast (~8x realtime on CPU). Neural methods (B2/OHNN) are too slow for real-time without GPU + batching optimization.
 
 #### The honest gap list

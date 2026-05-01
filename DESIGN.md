@@ -203,9 +203,9 @@ Single package, one repo, one release cadence.
 
 | Week | Deliverable | Definition of done |
 |---|---|---|
-| 1 | SpeechBrain recipe: B1 + B2 reproducible | `python -m speechbrain_voice_anon.recipes.VP2026.baseline_B1.train` produces published numbers ±0.5% EER |
-| 2 | MCP server skeleton + `vp_run_baseline` + `vp_run_eval` | `vpstack-mcp` PyPI install works; `vp_run_baseline("B1")` returns real numbers |
-| 3 | Skills v0.1: `/vp-baseline-compare`, `/vp-eval`, `/vp-spike` | All 3 skills callable from Claude Code, calling MCP, returning real results |
+| 1 | B1 + B2 reproducible | `bin/vpstack-b1` produces published numbers ±0.5% EER |
+| 2 | Core binaries + `vpstack-score` + `vpstack-eval` | Orchestration binaries work; `vpstack-score` returns real numbers |
+| 3 | Skills v0.1: `/vp-baseline-compare`, `/vp-eval`, `/vp-spike` | All 3 skills callable from Claude Code, returning real results |
 | 4 | Skills v0.2: `/vp-hypothesis`, `/vp-repro-check`, `/vp-writeup` | Full skill set complete |
 | 5 | npm packaging + install flow + auto-update preamble + telemetry | `npx vpstack@latest` installs everything; telemetry opt-in works; upgrade flow tested |
 | 6 | Auto-activation hybrid + first-run prompt + polish | Skills silent on 3 non-voice test repos; correctly activate on 3 voice test repos; documentation complete |
@@ -255,7 +255,7 @@ Buffer week 7 for unknown unknowns.
 
 1. ✅ **License audit DONE** (2026-04-27). See [LICENSING.md](LICENSING.md). Net verdict: download-at-runtime, recipe ships code only. One blocker confirmed: do NOT vendor VP2024 GPLv3 code — re-implement B1/B2 from eval plan PDF.
 2. **Then:** Create the GitHub repo skeleton with the structure above. Stub every file with a one-line description.
-3. **Week 1 task #1:** Port existing B1/B2 baseline scripts into `speechbrain_voice_anon/recipes/VP2026/baseline_B1/` and `baseline_B2/`. Get reproducible numbers on dev set.
+3. **Week 1 task #1:** Port existing B1/B2 baseline scripts into `bin/vpstack-b1` and `bin/vpstack-b2`. Get reproducible numbers on dev set.
 4. **Week 1 task #2:** Write `bin/vpstack-detect` first — it's a 50-line bash script and unblocks every skill's preamble. Test on 3 voice repos and 3 non-voice repos before moving on.
 5. **Skip ceremony:** Don't waste time on the npm packaging until week 5. The skills can run from `~/.claude/skills/vpstack/` via manual symlink during weeks 1–4.
 

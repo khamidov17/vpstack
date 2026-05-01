@@ -54,7 +54,7 @@ Read in parallel:
 - `~/.vpstack/projects/$SLUG/hypotheses/*.md` — most recent 5 (mtime ≤ 14 days)
 - `~/.vpstack/projects/$SLUG/research-plans/*.md` — locked plans (from `/vp-talk`)
 - `CLAUDE.md` (repo root) — local rules
-- `your anonymization recipe in baseline_B1/run.py` — canonical recipe shape
+- `bin/vpstack-b1` — canonical recipe shape
 
 ### Step 2: Hypothesis selection
 
@@ -151,8 +151,7 @@ Branch by `$CONTRACT_TYPE`:
 
 **A — Recipe runner:**
 ```bash
-python3 /tmp/vp_b1_run.py  # use the McAdams script from vp-baseline-compare for B1; adapt for other recipes \
-    --data_path tests/fixtures/librispeech_clip \
+vpstack-b1 --data_path tests/fixtures/librispeech_clip \
     --seed 42 --output_format json | tail -1 > /tmp/impl-out.json
 python -c "
 import json, sys
@@ -269,7 +268,7 @@ TEL_DUR=$(( TEL_END - TEL_START ))
 
 - `LICENSE_VIOLATION` — diff introduces VP2024 GPLv3 reference
 - `BASELINE_TESTS_RED` — tests already failing before implementation
-- `TARGET_OUT_OF_SCOPE` — path not under recipes/ or mcp-server/tools/
+- `TARGET_OUT_OF_SCOPE` — path not under bin/ or skills/
 - `PLACEHOLDER_HPARAMS` — YAML has TODO / FILL_ME / null / ""
 - `CONTRACT_VIOLATION` — recipe runner missing required CLI arg or JSON output shape; MCP tool raises unhandled exception
 - `REPRO_CHECK_FAIL` — `vp_check_reproducibility` returned FAIL
