@@ -28,7 +28,7 @@ vpstack closes that gap with a domain-specific toolkit that auto-activates on vo
 
 - **Skills:** 15 SKILL.md files that tell Claude what bash commands to run
 - **State:** Written to `~/.vpstack/projects/{slug}/` via Claude's Write tool directly
-- **Computation:** B1 McAdams script generated to `/tmp/vp_b1_run.py` by Claude on demand; attacker and B2 reference the official VP2026 challenge scripts
+- **Computation:** B1 McAdams is handled by `bin/vpstack-b1`; attacker and B2 reference the official VP2026 challenge scripts or use `bin/` wrappers.
 - **No Python code in the repo.** No MCP server. No pip install beyond what the researcher already needs.
 
 This follows the gstack pattern: markdown skills + bash = Claude Code, Codex, Cursor all work identically with zero additional setup.
@@ -91,45 +91,10 @@ MCP engine + thin skill wrappers. ~3–4 weeks. Rejected by user: wanted full sk
 vpstack/
 ├── README.md
 ├── package.json                  # npm-installable
-├── bin/
-│   ├── vpstack-install           # detects Claude Code / Codex / Cursor / Cline; installs accordingly
-│   ├── vpstack-upgrade           # auto-update flow (mirrors gstack-upgrade)
-│   ├── vpstack-config            # get/set telemetry, activation_override, etc.
-│   ├── vpstack-detect            # returns IS_VOICE_PROJECT yes/no with reason
-│   ├── vpstack-update-check      # pings version endpoint, prints UPGRADE_AVAILABLE
-│   └── vpstack-telemetry-log     # opt-in remote telemetry
-├── skills/
-│   ├── vp-hypothesis/SKILL.md
-│   ├── vp-spike/SKILL.md
-│   ├── vp-baseline-compare/SKILL.md
-│   ├── vp-eval/SKILL.md
-│   ├── vp-repro-check/SKILL.md
-│   └── vp-writeup/SKILL.md
-├── mcp-server/
-│   ├── pyproject.toml            # PyPI: vpstack-mcp
-│   ├── server.py                 # stdio MCP server (local subprocess, gstack-style)
-│   └── tools/
-│       ├── run_eval.py
-│       ├── run_baseline.py
-│       ├── check_submission.py
-│       ├── check_reproducibility.py
-│       ├── search_experiments.py
-│       ├── get_component_info.py
-│       └── log_experiment.py
-├── recipe/                       # SpeechBrain recipe — speechbrain-voice-anon
-│   ├── README.md
-│   ├── recipes/VP2026/
-│   │   ├── baseline_B1/          # McAdams
-│   │   ├── baseline_B2/          # neural baseline
-│   │   ├── ecapa_farthest/       # strong starter
-│   │   └── hifigan_anon/         # HiFi-GAN pipeline
-│   └── hparams/
-│       ├── train.yaml
-│       └── eval.yaml
-└── docs/
-    ├── quick-start.md
-    ├── activation.md             # how auto-activation works
-    └── telemetry.md              # what gets sent, what doesn't
+├── bin/                          # Bash binaries (orchestration primitives)
+├── skills/                       # Markdown skill workflows
+├── docs/                         # Domain knowledge and documentation
+└── tests/                        # Automated smoke tests
 ```
 
 ### The 6 Skills (v0.1)
@@ -150,30 +115,6 @@ Each follows the gstack pattern: YAML frontmatter, preamble (activation check + 
 - **User-level `~/.vpstack/projects/{slug}/`** — all research artifacts (hypotheses, spikes, experiment outputs). Per-project subdirectory, slug derived from repo basename. Mirrors `~/.gstack/projects/{slug}/`.
 - **User-level `~/.vpstack/config.json`** — telemetry mode, activation_override, version cache. Mirrors `~/.gstack/config`.
 
-### MCP Server Tool Signatures
-
-```python
-vp_run_baseline(baseline: Literal["B1", "B2"], data_path: str, seed: int = 42)
-  → {"eer": float, "wer": float, "linkability": float, "config_hash": str}
-
-vp_run_eval(system_path: str, eval_set: Literal["dev", "test"], seed: int = 42)
-  → {"eer": ..., "wer": ..., "linkability": ..., "side_channels": {...}}
-
-vp_check_submission(submission_path: str)
-  → {"valid": bool, "errors": List[str], "warnings": List[str]}
-
-vp_check_reproducibility(config_path: str)
-  → {"status": "PASS"|"FAIL", "reason": str, "missing": List[str]}
-
-vp_get_component_info(component_name: str)
-  → {"description": str, "tradeoffs": Dict, "papers": List[str]}
-
-vp_search_experiments(query: str, limit: int = 10)
-  → {"matches": [{"id": str, "summary": str, "eer": float, ...}]}
-
-vp_log_experiment(exp_id: str, metrics: Dict, config_hash: str)
-  → {"logged": bool, "path": str}
-```
 
 ### Auto-activation mechanism (the critical design)
 
@@ -254,11 +195,9 @@ Config persists at `~/.vpstack/config.json`. Changeable any time with `vpstack-c
 
 ### Distribution
 
-- **npm package `vpstack`** (or `vpstack-cc` if name taken) — installs CLI binaries + skills + MCP server config
-- **PyPI package `vpstack-mcp`** — the MCP server, installable independently for Cursor/Codex/Claude Desktop
-- **PyPI package `speechbrain-voice-anon`** — the recipe, installable independently for researchers who only want the SpeechBrain layer
+- **npm package `vpstack`** — installs CLI binaries + skills.
 
-Three packages, one repo, one release cadence. Users install whichever subset they need.
+Single package, one repo, one release cadence.
 
 ### Build order (week-by-week)
 
@@ -304,10 +243,9 @@ Buffer week 7 for unknown unknowns.
 
 ## Distribution Plan
 
-- **GitHub:** `vpstack/vpstack` — primary repo, MIT license
-- **npm:** `vpstack` — CLI + skills (or `vpstack-cc` if namespace conflict)
-- **PyPI:** `vpstack-mcp` (MCP server), `speechbrain-voice-anon` (recipe)
-- **CI/CD:** GitHub Actions — on tag push, builds and publishes all three packages atomically. Version bump in one place (`VERSION` file at repo root) triggers all package versions.
+- **GitHub:** `vpstack/vpstack` — primary repo, Apache 2.0 license
+- **npm:** `vpstack` — CLI + skills
+- **CI/CD:** GitHub Actions — on tag push, builds and publishes the package. Version bump in one place (`VERSION` file at repo root) triggers the package version.
 - **Docs:** Plain Markdown in `/docs`, mirrored to `vpstack.dev` (static site, optional)
 - **Telemetry endpoint:** Self-hosted Cloudflare Worker + KV. Public schema; researchers can audit what's stored.
 
@@ -319,8 +257,7 @@ Buffer week 7 for unknown unknowns.
 2. **Then:** Create the GitHub repo skeleton with the structure above. Stub every file with a one-line description.
 3. **Week 1 task #1:** Port existing B1/B2 baseline scripts into `speechbrain_voice_anon/recipes/VP2026/baseline_B1/` and `baseline_B2/`. Get reproducible numbers on dev set.
 4. **Week 1 task #2:** Write `bin/vpstack-detect` first — it's a 50-line bash script and unblocks every skill's preamble. Test on 3 voice repos and 3 non-voice repos before moving on.
-5. **Week 2:** Set up the MCP server using **stdio transport** (anthropic-mcp Python SDK). First tool to implement: `vp_run_baseline`. It just shells out to the recipe. Once that works, the rest are copies.
-6. **Skip ceremony:** Don't waste time on the npm packaging until week 5. The skills can run from `~/.claude/skills/vpstack/` via manual symlink during weeks 1–4.
+5. **Skip ceremony:** Don't waste time on the npm packaging until week 5. The skills can run from `~/.claude/skills/vpstack/` via manual symlink during weeks 1–4.
 
 ---
 

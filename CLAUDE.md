@@ -13,7 +13,7 @@ vpstack is **voice-privacy research infrastructure for AI coding agents**. It en
 **Read first if you're editing anything substantial:**
 - [DESIGN.md](DESIGN.md) — full architecture with 7 locked premises (P1–P7) and explicit non-goals
 - [LICENSING.md](LICENSING.md) — license posture (Apache 2.0, runtime model downloads only, **NO vendoring of VP2024 GPLv3 code**)
-- [TEST-PLAN.md](TEST-PLAN.md) — 7 critical CI gates, including B1/B2 reproducibility ±0.5% EER
+- [TEST-PLAN.md](TEST-PLAN.md) — 7 critical CI gates
 
 ---
 
@@ -26,7 +26,7 @@ vpstack is **voice-privacy research infrastructure for AI coding agents**. It en
 ## Non-negotiable rules
 
 1. **Never `import` or vendor anything from `Voice-Privacy-Challenge-2024`** (GPLv3). Re-implement from the published Eval Plan PDF instead.
-2. **Never write Python code in this repo.** Skills are markdown. `bin/` is bash. No MCP server. No Python packages. Zero code in skills.
+2. **Never write Python code in this repo.** Skills are markdown. `bin/` is bash. No MCP server. No Python packages. Zero code in skills. (Note: bash scripts in `bin/` may use inline Python for computation).
 3. **Never bundle pretrained model weights.** Users download at runtime via HuggingFace Hub or SpeechBrain.
 4. **Never bundle VP2026 trial lists / VoxCeleb audio / IEMOCAP.**
 5. **Telemetry payload is a strict allowlist.** Only keys in `bin/vpstack-telemetry-log` are permitted. Never add keys without updating the allowlist.
@@ -45,7 +45,7 @@ vpstack is **voice-privacy research infrastructure for AI coding agents**. It en
 | User config | `~/.vpstack/config.json` | Managed by `bin/vpstack-config`. |
 | Per-project state | `~/.vpstack/projects/{slug}/` | `domain_config.yaml`, `hypotheses/`, `experiments/`, `research-plans/`, `deferred-gates.jsonl` |
 | Per-project markers | `<repo>/.vpstack/` | `enabled`, `disabled`, `ask-later` — tiny activation markers |
-| Per-project markers | `<repo>/.vpstack/` | Just `enabled` / `disabled` / `ask-later` files. Tiny. |
+| Automated tests | `tests/` | Python/pytest smoke tests for binaries. |
 
 ---
 
@@ -86,15 +86,6 @@ The `Recommendation:` line is mandatory. Users need to know the right answer, no
 4. Update README's "Skills reference" section with the new skill + an example.
 5. Update CHANGELOG.
 
-### Implement a recipe (B2, attacker, etc.)
-
-Each `recipes/VP2026/{name}/run.py` has a docstring with the full implementation specification. Read it. The contract is:
-- CLI args: `--data_path` (or `--anonymized_path` etc.), `--seed`, `--output_format json|human`
-- On success: print a single JSON line on stdout with the documented schema
-- On failure: print to stderr, exit non-zero
-- Stream progress to stderr every 30 seconds for runs >15min (per MCP long-running-tool contract)
-- Honor `torch.use_deterministic_algorithms(True)` if hparams request it
-- Lazy-fetch model weights via `huggingface_hub.snapshot_download()` — never bundle
 
 ### Run tests
 

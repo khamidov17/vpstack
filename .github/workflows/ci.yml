@@ -25,12 +25,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest pyyaml numpy scipy soundfile
-          # Install both Python sub-packages in editable mode
-          pip install -e ./mcp-server || true
-          pip install -e ./speechbrain_voice_anon || true
 
-      - name: Run deterministic tests (skip GPU/data gates)
-        run: pytest -m "not gpu" --tb=short -v
+      - name: Run deterministic tests
+        run: pytest --tb=short -v
 
       - name: Lint with ruff
         run: |
@@ -68,19 +65,13 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
 
-      - name: Validate VERSION file matches pyproject.toml versions
+      - name: Validate VERSION file matches package.json
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
-          MCP_VERSION=$(grep -m1 'version = ' mcp-server/pyproject.toml | cut -d'"' -f2)
-          RECIPE_VERSION=$(grep -m1 'version = ' speechbrain_voice_anon/pyproject.toml | cut -d'"' -f2)
           NPM_VERSION=$(node -p "require('./package.json').version")
           echo "VERSION:        $VERSION"
-          echo "mcp-server:     $MCP_VERSION"
-          echo "recipe:         $RECIPE_VERSION"
           echo "package.json:   $NPM_VERSION"
-          # Atomic version policy: all four must match (modulo .dev → -dev style differences)
+          # Atomic version policy: both must match (modulo .dev → -dev style differences)
           v_normalized() { echo "$1" | sed 's/-dev/.dev0/' ; }
-          [ "$(v_normalized $VERSION)" = "$(v_normalized $MCP_VERSION)" ] || (echo "FAIL: VERSION/mcp mismatch"; exit 1)
-          [ "$(v_normalized $VERSION)" = "$(v_normalized $RECIPE_VERSION)" ] || (echo "FAIL: VERSION/recipe mismatch"; exit 1)
           [ "$(v_normalized $VERSION)" = "$(v_normalized $NPM_VERSION)" ] || (echo "FAIL: VERSION/npm mismatch"; exit 1)
           echo "All versions match."
